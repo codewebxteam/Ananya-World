@@ -1,168 +1,145 @@
-import { useState } from 'react';
-import { Bell } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Menu, X, Calendar, Clock, ChevronDown, User, Settings, LogOut } from 'lucide-react';
+import type { ProfileData } from './ProfileModal';
 
 interface HeaderProps {
-  activeTab: string;
+  isSidebarOpen: boolean;
+  setIsSidebarOpen: (isOpen: boolean) => void;
+  profileData: ProfileData;
+  setShowProfileModal: (show: boolean) => void;
+  setShowLogoutConfirm: (show: boolean) => void;
 }
 
-export default function Header({ activeTab }: HeaderProps) {
-  const [showNotifications, setShowNotifications] = useState(false);
+const Header: React.FC<HeaderProps> = ({
+  isSidebarOpen,
+  setIsSidebarOpen,
+  profileData,
+  setShowProfileModal,
+  setShowLogoutConfirm
+}) => {
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const notifications = [
-    { id: 1, text: 'Amit Kumar punched in outside geofence boundary.', type: 'warning', time: '10m ago' },
-    { id: 2, text: 'Salary processing completed for July 2026.', type: 'success', time: '2h ago' },
-    { id: 3, text: 'Field Staff Rahul Dev shared live GPS access.', type: 'info', time: '3h ago' },
-  ];
+  // Update time every second
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
-  const getPageTitle = () => {
-    switch (activeTab) {
-      case 'dashboard':
-        return 'System Overview';
-      case 'staff':
-        return 'Staff Directory';
-      case 'attendance':
-        return 'Attendance Tracker';
-      case 'tracking':
-        return 'Live GPS Location Tracker';
-      case 'salaries':
-        return 'Payroll & Salary Management';
-      case 'communications':
-        return 'Staff Communication Center';
-      default:
-        return 'Dashboard';
+  // Close dropdown on click outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsProfileDropdownOpen(false);
+      }
     }
-  };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const ProfileDropdown = () => (
+    <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-100 py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+      <div className="px-4 py-2 border-b border-gray-50 mb-2">
+        <p className="text-sm font-bold text-gray-900">{profileData.name}</p>
+        <p className="text-xs text-gray-500 truncate">{profileData.email}</p>
+      </div>
+      
+      <button 
+        onClick={() => { setShowProfileModal(true); setIsProfileDropdownOpen(false); }}
+        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-[#2563EB] transition-colors"
+      >
+        <User size={16} />
+        My Profile
+      </button>
+      
+      <button 
+        onClick={() => { setShowProfileModal(true); setIsProfileDropdownOpen(false); }}
+        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-[#2563EB] transition-colors"
+      >
+        <Settings size={16} />
+        Change Password
+      </button>
+      
+      <div className="border-t border-gray-50 mt-2 pt-2">
+        <button 
+          onClick={() => { setShowLogoutConfirm(true); setIsProfileDropdownOpen(false); }}
+          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+        >
+          <LogOut size={16} />
+          Logout
+        </button>
+      </div>
+    </div>
+  );
 
   return (
-    <header
-      style={{
-        height: 'var(--header-height)',
-        padding: '0 24px',
-        backgroundColor: 'var(--bg-glass)',
-        backdropFilter: 'blur(16px)',
-        borderBottom: '1px solid var(--border-glass)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        position: 'sticky',
-        top: 0,
-        zIndex: 90,
-      }}
-    >
-      <div>
-        <h1 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)' }}>
-          {getPageTitle()}
-        </h1>
+    <>
+      {/* Mobile Header with Hamburger Menu */}
+      <div className="lg:hidden fixed top-0 left-0 w-full bg-[#0A1A2F] text-white p-4 flex justify-between items-center z-40 shadow-md">
+        <div className="flex items-center gap-1">
+          <span className="text-[#FFD100] font-bold text-xl tracking-wide">Ananya</span>
+          <span className="text-white font-semibold text-xl tracking-wide">World</span>
+        </div>
+        <button 
+          onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+          className="p-1 focus:outline-none"
+        >
+          {isSidebarOpen ? <X size={28} /> : <Menu size={28} />}
+        </button>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-        {/* Status Indicators */}
-        <div style={{ display: 'flex', gap: '16px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--accent-success)' }} />
-            <span>GPS Tracking Active</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--accent-primary)' }} />
-            <span>Server Online</span>
-          </div>
+      {/* Overlay for mobile when sidebar is open */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* Desktop Header Content (rendered inside Main Content Area in App.tsx) */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+        <div>
+          <h1 className="text-2xl lg:text-[28px] font-extrabold text-gray-900 flex items-center gap-2 mb-1">
+            Good Morning, {profileData.name.split(' ')[0]} <span className="text-2xl">👋</span>
+          </h1>
+          <p className="text-gray-500 text-sm font-medium">Here's what's happening with your team today.</p>
         </div>
 
-        {/* Notifications Icon with Dropdown */}
-        <div style={{ position: 'relative' }}>
-          <button
-            onClick={() => setShowNotifications(!showNotifications)}
-            style={{
-              background: 'var(--bg-tertiary)',
-              border: '1px solid var(--border-glass)',
-              borderRadius: '10px',
-              width: '40px',
-              height: '40px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              fontSize: '18px',
-              position: 'relative',
-              transition: 'var(--transition)',
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)')}
-            onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border-glass)')}
-          >
-            <Bell size={18} />
-            <span
-              style={{
-                position: 'absolute',
-                top: '-3px',
-                right: '-3px',
-                backgroundColor: 'var(--accent-error)',
-                width: '16px',
-                height: '16px',
-                borderRadius: '50%',
-                fontSize: '10px',
-                color: 'white',
-                fontWeight: 'bold',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              {notifications.length}
-            </span>
-          </button>
-
-          {showNotifications && (
-            <div
-              className="glass"
-              style={{
-                position: 'absolute',
-                right: 0,
-                top: '50px',
-                width: '320px',
-                padding: '16px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '12px',
-                zIndex: 200,
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h3 style={{ fontSize: '14px', fontWeight: 700 }}>Notifications</h3>
-                <button
-                  onClick={() => setShowNotifications(false)}
-                  style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '12px' }}
-                >
-                  Close
-                </button>
-              </div>
-              <hr style={{ border: 'none', borderBottom: '1px solid var(--border-glass)' }} />
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {notifications.map((n) => (
-                  <div
-                    key={n.id}
-                    style={{
-                      padding: '10px',
-                      borderRadius: '8px',
-                      backgroundColor: 'rgba(255,255,255,0.02)',
-                      fontSize: '12px',
-                      borderLeft: `4px solid ${
-                        n.type === 'warning'
-                          ? 'var(--accent-warning)'
-                          : n.type === 'success'
-                          ? 'var(--accent-success)'
-                          : 'var(--accent-primary)'
-                      }`,
-                    }}
-                  >
-                    <p style={{ color: 'var(--text-primary)', marginBottom: '4px' }}>{n.text}</p>
-                    <span style={{ color: 'var(--text-muted)', fontSize: '10px' }}>{n.time}</span>
-                  </div>
-                ))}
-              </div>
+        <div className="flex items-center gap-4 lg:gap-6 self-start md:self-auto">
+          <div className="bg-white px-4 py-2.5 rounded-xl shadow-sm border border-gray-100 hidden md:flex flex-col gap-1.5">
+            <div className="flex items-center gap-2">
+              <Calendar size={15} className="text-[#2563EB]" strokeWidth={2.5} />
+              <span className="text-xs font-semibold text-gray-700">
+                {currentTime.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}
+              </span>
             </div>
-          )}
+            <div className="flex items-center gap-2">
+              <Clock size={15} className="text-[#2563EB]" strokeWidth={2.5} />
+              <span className="text-xs font-semibold text-gray-700">
+                {currentTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}
+              </span>
+            </div>
+          </div>
+          
+          <div className="relative" ref={dropdownRef}>
+            <button 
+              onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
+              className="flex items-center gap-2 focus:outline-none"
+            >
+              <div className="w-10 h-10 rounded-full bg-yellow-100 border border-gray-200 overflow-hidden shadow-sm hover:ring-2 hover:ring-[#2563EB] transition-all">
+                <img src={profileData.profilePic} alt="Admin" className="w-full h-full object-cover" />
+              </div>
+              <ChevronDown size={16} className={`text-gray-500 transition-transform ${isProfileDropdownOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {isProfileDropdownOpen && <ProfileDropdown />}
+          </div>
         </div>
       </div>
-    </header>
+    </>
   );
-}
+};
+
+export default Header;

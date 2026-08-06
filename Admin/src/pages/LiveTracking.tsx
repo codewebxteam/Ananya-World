@@ -1,251 +1,318 @@
-import { useState, useEffect } from 'react';
-import { MapPin } from 'lucide-react';
-import { initialStaff } from '../services/mockData';
-import type { StaffMember } from '../types';
+import React from 'react';
+import { 
+  Users, MapPin, 
+  Search, Filter, 
+  WifiOff, Timer, Activity, LocateFixed, Plus, Minus,
+  RefreshCcw, Info, ChevronRight
+} from 'lucide-react';
 
 export default function LiveTracking() {
-  const onlineStaff = initialStaff.filter((s) => s.status === 'Online' && s.location);
-  const [selectedStaff, setSelectedStaff] = useState<StaffMember | null>(onlineStaff[0] || null);
-  const [mockLocations, setMockLocations] = useState(onlineStaff);
+  // Dummy data for map staff list
+  const mapStaffList = [
+    { id: 1, name: 'Rahul Verma', role: 'Field Specimen Collector', location: 'Gorakhpur, UP', status: 'On Duty', time: '09:28 AM', dot: 'bg-green-500', avatar: 'https://randomuser.me/api/portraits/men/32.jpg' },
+    { id: 2, name: 'Amit Kumar', role: 'Field Executive', location: 'Siwan, Bihar', status: 'On Duty', time: '09:27 AM', dot: 'bg-green-500', avatar: 'https://randomuser.me/api/portraits/men/46.jpg' },
+    { id: 3, name: 'Vikram Singh', role: 'Logistics Executive', location: 'Deoria, UP', status: 'On Duty', time: '09:25 AM', dot: 'bg-green-500', avatar: 'https://randomuser.me/api/portraits/men/22.jpg' },
+    { id: 4, name: 'Neha Sharma', role: 'Lab Technician', location: 'Basti, UP', status: 'On Field', time: '09:24 AM', dot: 'bg-yellow-500', avatar: 'https://randomuser.me/api/portraits/women/44.jpg' },
+    { id: 5, name: 'Sandeep Yadav', role: 'Field Specimen Collector', location: '-', status: 'Offline', time: '-', dot: 'bg-gray-400', avatar: 'https://randomuser.me/api/portraits/men/85.jpg' },
+  ];
 
-  // Simulate movement for active staff
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setMockLocations((prev) =>
-        prev.map((s) => {
-          if (s.location) {
-            // Add a small jitter to simulate moving
-            const latJitter = (Math.random() - 0.5) * 0.0005;
-            const lngJitter = (Math.random() - 0.5) * 0.0005;
-            return {
-              ...s,
-              location: {
-                ...s.location,
-                latitude: s.location.latitude + latJitter,
-                longitude: s.location.longitude + lngJitter,
-                lastUpdated: 'Just now',
-              },
-            };
-          }
-          return s;
-        })
-      );
-    }, 4000);
+  // Dummy data for recent staff table
+  const recentStaffData = [
+    { id: 1, name: 'Rahul Verma', location: 'Gorakhpur, UP', updated: '1 min ago', battery: 85, batColor: 'bg-green-500', status: 'On Duty', avatar: 'https://randomuser.me/api/portraits/men/32.jpg' },
+    { id: 2, name: 'Amit Kumar', location: 'Siwan, Bihar', updated: '2 min ago', battery: 68, batColor: 'bg-yellow-500', status: 'On Duty', avatar: 'https://randomuser.me/api/portraits/men/46.jpg' },
+    { id: 3, name: 'Vikram Singh', location: 'Deoria, UP', updated: '3 min ago', battery: 55, batColor: 'bg-orange-500', status: 'On Duty', avatar: 'https://randomuser.me/api/portraits/men/22.jpg' },
+    { id: 4, name: 'Neha Sharma', location: 'Basti, UP', updated: '4 min ago', battery: 72, batColor: 'bg-green-500', status: 'On Field', avatar: 'https://randomuser.me/api/portraits/women/44.jpg' },
+    { id: 5, name: 'Kajal Verma', location: 'Maharajganj, UP', updated: '5 min ago', battery: 90, batColor: 'bg-green-500', status: 'On Duty', avatar: 'https://randomuser.me/api/portraits/women/33.jpg' },
+  ];
 
-    return () => clearInterval(interval);
-  }, []);
-
-  // Update selected staff details when they move
-  const currentSelected = mockLocations.find((s) => s.id === selectedStaff?.id) || selectedStaff;
+  const renderStatus = (status: string) => {
+    switch(status) {
+      case 'On Duty': return <span className="text-green-600 bg-green-50 px-2 py-0.5 rounded text-[10px] font-bold border border-green-100">On Duty</span>;
+      case 'On Field': return <span className="text-orange-600 bg-orange-50 px-2 py-0.5 rounded text-[10px] font-bold border border-orange-100">On Field</span>;
+      case 'Offline': return <span className="text-red-500 bg-red-50 px-2 py-0.5 rounded text-[10px] font-bold border border-red-100">Offline</span>;
+      default: return null;
+    }
+  };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '24px', height: 'calc(100vh - 130px)' }}>
-      {/* Sidebar List of Online Staff */}
-      <div className="glass" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <h3 style={{ fontSize: '16px', fontWeight: 700 }}>Online Staff Directory</h3>
-        <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-          Click on any field staff member to center and inspect their live GPS logs.
-        </span>
+    <div className="animate-in fade-in duration-500">
+      {/* ----- TOP STATS ROW ----- */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
+        <div className="bg-white rounded-[20px] p-4 shadow-sm border border-gray-100 flex flex-col justify-between">
+          <div className="flex items-start gap-3">
+            <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-500 shrink-0"><Users size={24} strokeWidth={2} /></div>
+            <div>
+              <p className="text-gray-500 text-xs font-medium mb-0.5">Staff Online</p>
+              <h3 className="text-2xl font-bold text-gray-900 leading-tight">48</h3>
+            </div>
+          </div>
+          <p className="text-green-600 text-[10px] font-medium mt-2 ml-[60px]">Currently Online</p>
+        </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto', flexGrow: 1 }}>
-          {mockLocations.map((s) => {
-            const isSelected = selectedStaff?.id === s.id;
-            return (
-              <div
-                key={s.id}
-                onClick={() => setSelectedStaff(s)}
-                style={{
-                  padding: '12px',
-                  borderRadius: '10px',
-                  backgroundColor: isSelected ? 'rgba(59, 130, 246, 0.1)' : 'rgba(255, 255, 255, 0.02)',
-                  border: `1px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-glass)'}`,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  transition: 'var(--transition)',
-                }}
-              >
-                <div
-                  style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '50%',
-                    backgroundImage: `url(${s.avatar})`,
-                    backgroundSize: 'cover',
-                  }}
-                />
-                <div style={{ flexGrow: 1, minWidth: 0 }}>
-                  <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {s.name}
-                  </h4>
-                  <p style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{s.role}</p>
-                </div>
-                <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--accent-success)' }} />
-              </div>
-            );
-          })}
+        <div className="bg-white rounded-[20px] p-4 shadow-sm border border-gray-100 flex flex-col justify-between">
+          <div className="flex items-start gap-3">
+            <div className="w-12 h-12 rounded-full bg-green-50 flex items-center justify-center text-green-500 shrink-0"><MapPin size={24} strokeWidth={2} /></div>
+            <div>
+              <p className="text-gray-500 text-xs font-medium mb-0.5">On Field</p>
+              <h3 className="text-2xl font-bold text-gray-900 leading-tight">36</h3>
+            </div>
+          </div>
+          <p className="text-green-600 text-[10px] font-medium mt-2 ml-[60px]">Active in Field</p>
+        </div>
+
+        <div className="bg-white rounded-[20px] p-4 shadow-sm border border-gray-100 flex flex-col justify-between">
+          <div className="flex items-start gap-3">
+            <div className="w-12 h-12 rounded-full bg-orange-50 flex items-center justify-center text-orange-500 shrink-0"><Activity size={24} strokeWidth={2} /></div>
+            <div>
+              <p className="text-gray-500 text-xs font-medium mb-0.5">Total Tracking</p>
+              <h3 className="text-2xl font-bold text-gray-900 leading-tight">48</h3>
+            </div>
+          </div>
+          <p className="text-gray-500 text-[10px] font-medium mt-2 ml-[60px]">Live Tracking</p>
+        </div>
+
+        <div className="bg-white rounded-[20px] p-4 shadow-sm border border-gray-100 flex flex-col justify-between">
+          <div className="flex items-start gap-3">
+            <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center text-red-500 shrink-0"><WifiOff size={24} strokeWidth={2} /></div>
+            <div>
+              <p className="text-gray-500 text-xs font-medium mb-0.5">Offline</p>
+              <h3 className="text-2xl font-bold text-gray-900 leading-tight">208</h3>
+            </div>
+          </div>
+          <p className="text-red-500 text-[10px] font-medium mt-2 ml-[60px]">Not Online</p>
+        </div>
+
+        <div className="bg-white rounded-[20px] p-4 shadow-sm border border-gray-100 flex flex-col justify-between col-span-2 md:col-span-1 lg:col-span-1">
+          <div className="flex items-start gap-3">
+            <div className="w-12 h-12 rounded-full bg-purple-50 flex items-center justify-center text-purple-600 shrink-0"><Timer size={24} strokeWidth={2} /></div>
+            <div>
+              <p className="text-gray-500 text-xs font-medium mb-0.5">Avg. Session Time</p>
+              <h3 className="text-2xl font-bold text-gray-900 leading-tight">6h 15m</h3>
+            </div>
+          </div>
+          <p className="text-gray-500 text-[10px] font-medium mt-2 ml-[60px]">Today</p>
         </div>
       </div>
 
-      {/* Map Display Console */}
-      <div className="glass" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
-        {/* Map Canvas */}
-        <div
-          style={{
-            flexGrow: 1,
-            backgroundColor: '#0f172a',
-            backgroundImage: 'radial-gradient(rgba(255, 255, 255, 0.1) 1.5px, transparent 0)',
-            backgroundSize: '30px 30px',
-            position: 'relative',
-            overflow: 'hidden',
-          }}
-        >
-          {/* Mock Laboratory Geofence circles */}
-          <div
-            style={{
-              position: 'absolute',
-              top: '40%',
-              left: '45%',
-              width: '180px',
-              height: '180px',
-              borderRadius: '50%',
-              border: '2px dashed rgba(16, 185, 129, 0.3)',
-              backgroundColor: 'rgba(16, 185, 129, 0.04)',
-              transform: 'translate(-50%, -50%)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              pointerEvents: 'none',
-            }}
-          >
-            <span style={{ fontSize: '10px', color: 'var(--accent-success)', fontWeight: 'bold' }}>Geofence: Lab-Central</span>
+      {/* ----- MAP SECTION ----- */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        
+        {/* Left Panel: Staff on Map List */}
+        <div className="bg-white rounded-[20px] shadow-sm border border-gray-100 flex flex-col h-[500px]">
+          <div className="p-4 border-b border-gray-100">
+            <h2 className="text-gray-900 font-bold mb-3">Staff on Map <span className="text-gray-500 font-normal text-sm">(48)</span></h2>
+            <div className="flex gap-2">
+              <div className="flex-1 relative">
+                <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
+                <input type="text" placeholder="Search staff..." className="w-full bg-gray-50 border border-gray-200 rounded-lg pl-9 pr-3 py-2 text-sm text-gray-700 focus:outline-none focus:border-blue-400" />
+              </div>
+              <button className="p-2 border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50">
+                <Filter size={18} />
+              </button>
+            </div>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto">
+            {mapStaffList.map((staff, idx) => (
+              <div key={staff.id} className={`p-4 flex items-start gap-3 ${idx !== mapStaffList.length - 1 ? 'border-b border-gray-50' : ''} hover:bg-gray-50/50 cursor-pointer transition-colors`}>
+                <div className="flex items-center gap-2 mt-1">
+                  <div className={`w-2 h-2 rounded-full ${staff.dot}`}></div>
+                  <img src={staff.avatar} alt={staff.name} className="w-10 h-10 rounded-full object-cover border border-gray-200" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex justify-between items-start mb-0.5">
+                    <h4 className="text-sm font-bold text-gray-900">{staff.name}</h4>
+                    {renderStatus(staff.status)}
+                  </div>
+                  <p className="text-[11px] text-gray-500 font-medium mb-1">{staff.role}</p>
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-1 text-gray-500">
+                      <MapPin size={12} />
+                      <span className="text-[11px]">{staff.location}</span>
+                    </div>
+                    <span className="text-[10px] text-gray-400 font-medium">{staff.time}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          
+          <div className="p-3 border-t border-gray-100 flex justify-between items-center cursor-pointer hover:bg-gray-50 rounded-b-[20px] group transition-colors">
+            <span className="text-blue-600 text-xs font-bold px-2">View All Staff</span>
+            <ChevronRight size={16} className="text-blue-600 group-hover:translate-x-1 transition-transform" />
+          </div>
+        </div>
+
+        {/* Right Panel: Map Area */}
+        <div className="bg-white rounded-[20px] shadow-sm border border-gray-100 lg:col-span-2 relative overflow-hidden h-[500px]">
+          {/* Map Background Simulation */}
+          <div className="absolute inset-0 bg-[#F0F4F8]" style={{ backgroundImage: 'radial-gradient(#CBD5E1 1px, transparent 1px)', backgroundSize: '24px 24px' }}>
+            {/* SVG lines to simulate roads */}
+            <svg className="w-full h-full opacity-30" xmlns="http://www.w3.org/2000/svg">
+              <path d="M -50 100 Q 200 150 400 50 T 900 200" stroke="#94A3B8" strokeWidth="6" fill="none" />
+              <path d="M 100 -50 Q 150 200 300 400 T 500 800" stroke="#94A3B8" strokeWidth="4" fill="none" />
+              <path d="M 300 250 Q 500 250 700 400 T 1000 300" stroke="#FCD34D" strokeWidth="4" fill="none" />
+            </svg>
           </div>
 
-          {/* Render markers for all online staff */}
-          {mockLocations.map((s) => {
-            if (!s.location) return null;
-            const isSelected = s.id === selectedStaff?.id;
-            
-            // Map lat/long coordinates to relative screen percentages
-            // Delhi Center is around 28.61, 77.20. Let's position relatively:
-            const relativeTop = 50 - (s.location.latitude - 28.57) * 200;
-            const relativeLeft = 50 + (s.location.longitude - 77.30) * 200;
+          {/* Map UI Elements */}
+          {/* Top Left: Map/Satellite Toggle */}
+          <div className="absolute top-4 left-4 flex bg-white rounded-lg shadow-sm overflow-hidden border border-gray-200">
+            <button className="px-4 py-1.5 text-sm font-bold text-gray-800 bg-gray-100">Map</button>
+            <button className="px-4 py-1.5 text-sm font-medium text-gray-500 hover:bg-gray-50">Satellite</button>
+          </div>
 
-            return (
-              <div
-                key={s.id}
-                onClick={() => setSelectedStaff(s)}
-                style={{
-                  position: 'absolute',
-                  top: `${Math.min(Math.max(relativeTop, 10), 90)}%`,
-                  left: `${Math.min(Math.max(relativeLeft, 10), 90)}%`,
-                  transform: 'translate(-50%, -50%)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  zIndex: isSelected ? 10 : 2,
-                }}
-              >
-                <div style={{ position: 'relative' }}>
-                  <div
-                    style={{
-                      width: '32px',
-                      height: '32px',
-                      borderRadius: '50%',
-                      backgroundImage: `url(${s.avatar})`,
-                      backgroundSize: 'cover',
-                      border: `2px solid ${isSelected ? 'var(--accent-primary)' : 'var(--border-glass)'}`,
-                      boxShadow: isSelected ? '0 0 15px var(--accent-primary)' : 'none',
-                    }}
-                  />
-                  {/* Status ping */}
-                  <div
-                    style={{
-                      position: 'absolute',
-                      bottom: '-2px',
-                      right: '-2px',
-                      width: '10px',
-                      height: '10px',
-                      borderRadius: '50%',
-                      backgroundColor: 'var(--accent-success)',
-                      border: '1px solid #0f172a',
-                    }}
-                  />
-                </div>
-                <span
-                  style={{
-                    fontSize: '9px',
-                    background: 'rgba(0,0,0,0.85)',
-                    padding: '2px 6px',
-                    borderRadius: '4px',
-                    color: 'white',
-                    marginTop: '4px',
-                    fontWeight: 600,
-                    whiteSpace: 'nowrap',
-                    border: isSelected ? '1px solid var(--accent-primary)' : '1px solid transparent',
-                  }}
-                >
-                  {s.name.split(' ')[0]}
-                </span>
-              </div>
-            );
-          })}
-
-          {/* Selected Staff Float Detail card */}
-          {currentSelected && currentSelected.location && (
-            <div
-              className="glass"
-              style={{
-                position: 'absolute',
-                bottom: '16px',
-                left: '16px',
-                right: '16px',
-                padding: '16px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                backgroundColor: 'rgba(15, 23, 42, 0.95)',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                <div
-                  style={{
-                    width: '44px',
-                    height: '44px',
-                    borderRadius: '50%',
-                    backgroundImage: `url(${currentSelected.avatar})`,
-                    backgroundSize: 'cover',
-                    border: '2px solid var(--accent-primary)',
-                  }}
-                />
-                <div>
-                  <h4 style={{ fontSize: '15px', fontWeight: 700 }}>{currentSelected.name}</h4>
-                  <span style={{ fontSize: '12px', color: 'var(--accent-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <MapPin size={14} /> Position: {currentSelected.location.latitude.toFixed(5)}, {currentSelected.location.longitude.toFixed(5)}
-                  </span>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: '20px', fontSize: '13px' }}>
-                <div>
-                  <span style={{ color: 'var(--text-secondary)', display: 'block' }}>Speed</span>
-                  <span style={{ fontWeight: 600 }}>24 km/h (Moving)</span>
-                </div>
-                <div>
-                  <span style={{ color: 'var(--text-secondary)', display: 'block' }}>Battery</span>
-                  <span style={{ fontWeight: 600, color: 'var(--accent-success)' }}>87%</span>
-                </div>
-                <div>
-                  <span style={{ color: 'var(--text-secondary)', display: 'block' }}>Last Sync</span>
-                  <span style={{ fontWeight: 600 }}>{currentSelected.location.lastUpdated}</span>
-                </div>
-              </div>
+          {/* Top Right: Map Legend */}
+          <div className="absolute top-4 right-4 bg-white/90 backdrop-blur rounded-xl p-3 shadow-sm border border-gray-200 space-y-2">
+            <div className="flex items-center gap-2 text-xs font-medium text-gray-700">
+              <span className="text-green-600 font-bold w-4 text-right">48</span> Online
             </div>
-          )}
+            <div className="flex items-center gap-2 text-xs font-medium text-gray-700">
+              <span className="text-orange-500 font-bold w-4 text-right">38</span> On Field
+            </div>
+            <div className="flex items-center gap-2 text-xs font-medium text-gray-700">
+              <span className="text-gray-500 font-bold w-4 text-right">088</span> Offline
+            </div>
+          </div>
+
+          {/* Dummy Avatars on Map */}
+          <div className="absolute top-[30%] left-[25%] flex flex-col items-center">
+            <div className="w-9 h-9 rounded-full border-[3px] border-green-500 shadow-md overflow-hidden relative"><img src="https://randomuser.me/api/portraits/women/44.jpg" alt="user" className="w-full h-full object-cover" /></div>
+            <div className="bg-white/90 px-1.5 py-0.5 rounded text-[9px] font-bold mt-1 text-gray-700 shadow-sm">Basti</div>
+          </div>
+          <div className="absolute top-[40%] left-[50%] flex flex-col items-center">
+            <div className="w-10 h-10 rounded-full border-[3px] border-green-500 shadow-lg overflow-hidden relative z-10"><img src="https://randomuser.me/api/portraits/men/32.jpg" alt="user" className="w-full h-full object-cover" /></div>
+            <div className="bg-white/90 px-2 py-0.5 rounded text-[11px] font-bold mt-1 text-gray-900 shadow-sm">Gorakhpur</div>
+          </div>
+          <div className="absolute top-[55%] left-[65%] flex flex-col items-center">
+            <div className="w-9 h-9 rounded-full border-[3px] border-orange-500 shadow-md overflow-hidden relative"><img src="https://randomuser.me/api/portraits/women/68.jpg" alt="user" className="w-full h-full object-cover" /></div>
+          </div>
+          <div className="absolute top-[45%] left-[80%] flex flex-col items-center">
+            <div className="w-9 h-9 rounded-full border-[3px] border-green-500 shadow-md overflow-hidden relative"><img src="https://randomuser.me/api/portraits/men/46.jpg" alt="user" className="w-full h-full object-cover" /></div>
+            <div className="bg-white/90 px-1.5 py-0.5 rounded text-[10px] font-bold mt-1 text-gray-700 shadow-sm">Siwan</div>
+          </div>
+          <div className="absolute top-[25%] left-[70%] flex flex-col items-center">
+            <div className="w-8 h-8 rounded-full border-[2.5px] border-green-500 shadow-md overflow-hidden relative"><img src="https://randomuser.me/api/portraits/men/22.jpg" alt="user" className="w-full h-full object-cover" /></div>
+          </div>
+
+          {/* Bottom Right: Zoom Controls */}
+          <div className="absolute bottom-4 right-4 flex flex-col gap-2">
+            <button className="w-9 h-9 bg-white rounded-lg shadow-sm border border-gray-200 flex items-center justify-center text-gray-600 hover:bg-gray-50"><LocateFixed size={18} /></button>
+            <div className="flex flex-col bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+              <button className="w-9 h-9 flex items-center justify-center text-gray-600 hover:bg-gray-50 border-b border-gray-100"><Plus size={18} /></button>
+              <button className="w-9 h-9 flex items-center justify-center text-gray-600 hover:bg-gray-50"><Minus size={18} /></button>
+            </div>
+          </div>
+
+          {/* Bottom Left: Auto Refresh */}
+          <div className="absolute bottom-4 left-4 flex gap-2">
+            <div className="bg-white px-3 py-2 rounded-xl shadow-sm border border-gray-200 flex items-center gap-2">
+              <span className="text-gray-600 text-xs font-medium">Auto refresh in 30s</span>
+              <div className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse"></div>
+            </div>
+            <button className="bg-white px-3 py-2 rounded-xl shadow-sm border border-gray-200 flex items-center gap-2 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-colors group">
+              <RefreshCcw size={14} className="text-blue-500 group-hover:rotate-180 transition-transform duration-500" />
+              <span className="text-blue-600 text-xs font-bold">Refresh Now</span>
+            </button>
+          </div>
+
         </div>
       </div>
+
+      {/* ----- BOTTOM SECTION ----- */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        
+        {/* Recently Active Staff Table */}
+        <div className="bg-white rounded-[20px] p-5 shadow-sm border border-gray-100 lg:col-span-2 flex flex-col">
+          <h3 className="text-gray-900 font-bold mb-4">Recently Active Staff</h3>
+          <div className="overflow-x-auto flex-1">
+            <table className="w-full text-left min-w-[600px]">
+              <thead>
+                <tr className="border-b border-gray-100">
+                  <th className="pb-3 px-2 text-xs font-semibold text-gray-500">#</th>
+                  <th className="pb-3 px-2 text-xs font-semibold text-gray-500">Staff Name</th>
+                  <th className="pb-3 px-2 text-xs font-semibold text-gray-500">Last Location</th>
+                  <th className="pb-3 px-2 text-xs font-semibold text-gray-500">Last Updated</th>
+                  <th className="pb-3 px-2 text-xs font-semibold text-gray-500">Battery</th>
+                  <th className="pb-3 px-2 text-xs font-semibold text-gray-500">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentStaffData.map((staff) => (
+                  <tr key={staff.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50">
+                    <td className="py-3 px-2 text-sm text-gray-600 font-medium">{staff.id}</td>
+                    <td className="py-3 px-2">
+                      <div className="flex items-center gap-2">
+                        <img src={staff.avatar} alt={staff.name} className="w-7 h-7 rounded-full object-cover" />
+                        <span className="text-sm font-bold text-gray-900">{staff.name}</span>
+                      </div>
+                    </td>
+                    <td className="py-3 px-2 text-sm text-gray-600">{staff.location}</td>
+                    <td className="py-3 px-2 text-sm text-gray-600">{staff.updated}</td>
+                    <td className="py-3 px-2">
+                      <div className="flex items-center gap-1.5">
+                        {/* Dummy battery icon representation */}
+                        <div className="w-5 h-2.5 rounded-[2px] border border-gray-300 p-[1px] relative flex">
+                          <div className={`h-full rounded-[1px] ${staff.batColor}`} style={{ width: `${staff.battery}%` }}></div>
+                          <div className="absolute -right-[2px] top-[2px] w-[2px] h-1 bg-gray-300 rounded-r-sm"></div>
+                        </div>
+                        <span className="text-xs text-gray-700 font-medium">{staff.battery}%</span>
+                      </div>
+                    </td>
+                    <td className="py-3 px-2">{renderStatus(staff.status)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-4 pt-3 border-t border-gray-100 flex justify-between items-center cursor-pointer hover:text-blue-600 group">
+            <span className="text-blue-600 text-xs font-bold">View All Live Staff</span>
+            <ChevronRight size={16} className="text-blue-600 group-hover:translate-x-1 transition-transform" />
+          </div>
+        </div>
+
+        {/* Tracking Summary (Today) */}
+        <div className="bg-white rounded-[20px] p-5 shadow-sm border border-gray-100 flex flex-col">
+          <h3 className="text-gray-900 font-bold mb-6">Tracking Summary <span className="text-gray-500 font-normal text-sm ml-1">(Today)</span></h3>
+          
+          <div className="flex flex-col sm:flex-row items-center gap-8 justify-center mb-6 flex-1">
+            {/* CSS Conic Gradient Doughnut */}
+            <div className="relative w-36 h-36 rounded-full flex items-center justify-center shrink-0" 
+                 style={{ background: 'conic-gradient(#10B981 0% 75%, #F59E0B 75% 91%, #9CA3AF 91% 100%)' }}>
+              <div className="absolute w-[100px] h-[100px] bg-white rounded-full flex flex-col items-center justify-center shadow-inner">
+                <span className="text-3xl font-bold text-gray-900 leading-tight">48</span>
+                <span className="text-gray-500 text-[10px] font-medium leading-tight text-center mt-1">Total<br/>Tracking</span>
+              </div>
+            </div>
+            {/* Legend */}
+            <div className="flex-1 w-full space-y-4">
+              <div className="flex justify-between items-center text-sm">
+                <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-green-500"></div><span className="text-gray-600 font-medium">On Duty</span></div>
+                <span className="text-gray-900 font-semibold">36 <span className="text-gray-400 font-normal text-xs ml-1">(75%)</span></span>
+              </div>
+              <div className="flex justify-between items-center text-sm">
+                <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-orange-500"></div><span className="text-gray-600 font-medium">On Field</span></div>
+                <span className="text-gray-900 font-semibold">12 <span className="text-gray-400 font-normal text-xs ml-1">(16.67%)</span></span>
+              </div>
+              <div className="flex justify-between items-center text-sm">
+                <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-gray-400"></div><span className="text-gray-600 font-medium">Offline</span></div>
+                <span className="text-gray-900 font-semibold">208 <span className="text-gray-400 font-normal text-xs ml-1">(33.33%)</span></span>
+              </div>
+            </div>
+          </div>
+
+          {/* Info Box */}
+          <div className="bg-blue-50/50 border border-blue-100 rounded-xl p-3 flex gap-2.5">
+            <Info size={16} className="text-blue-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-blue-700 text-xs font-bold mb-0.5">All times are in IST (Asia/Kolkata)</p>
+              <p className="text-blue-600/80 text-[10px]">Live tracking is active for online staff only.</p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
     </div>
   );
 }

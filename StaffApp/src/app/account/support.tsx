@@ -54,7 +54,7 @@ export default function SupportScreen() {
           <ChevronLeft color="#374151" size={24} strokeWidth={2.5} className="ml-1" />
         </TouchableOpacity>
         <Text className="text-[#1E3A8A] text-lg font-bold">Help & Support</Text>
-        <View className="w-10 h-10" /> {/* Spacer */}
+        <View className="w-10 h-10" />
       </View>
 
       <ScrollView 

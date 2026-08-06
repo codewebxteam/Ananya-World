@@ -1,159 +1,108 @@
-
-
+import React from 'react';
 import { 
-  LayoutDashboard, 
-  Users, 
-  Calendar, 
-  MapPin, 
-  Coins, 
-  MessageSquare 
+  LayoutDashboard, Users, CalendarDays, MapPin, 
+  IndianRupee, MessageSquare, ChevronDown, LogOut, Settings 
 } from 'lucide-react';
+import type { ProfileData } from './ProfileModal';
 
 interface SidebarProps {
+  isSidebarOpen: boolean;
+  setIsSidebarOpen: (isOpen: boolean) => void;
   activeTab: string;
   setActiveTab: (tab: string) => void;
+  profileData: ProfileData;
+  setShowProfileModal: (show: boolean) => void;
+  setShowLogoutConfirm: (show: boolean) => void;
 }
 
-export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
-  const menuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'staff', label: 'Staff Directory', icon: Users },
-    { id: 'attendance', label: 'Attendance Logs', icon: Calendar },
-    { id: 'tracking', label: 'Live GPS Tracking', icon: MapPin },
-    { id: 'salaries', label: 'Payroll & Salaries', icon: Coins },
-    { id: 'communications', label: 'Communications', icon: MessageSquare },
+const Sidebar: React.FC<SidebarProps> = ({
+  isSidebarOpen,
+  setIsSidebarOpen,
+  activeTab,
+  setActiveTab,
+  profileData,
+  setShowProfileModal,
+  setShowLogoutConfirm
+}) => {
+  const navItems = [
+    { id: 'dashboard', name: 'Dashboard', icon: LayoutDashboard },
+    { id: 'staff', name: 'Staff Directory', icon: Users },
+    { id: 'attendance', name: 'Attendance Logs', icon: CalendarDays },
+    { id: 'gps', name: 'Live GPS Tracking', icon: MapPin },
+    { id: 'payroll', name: 'Payroll & Salaries', icon: IndianRupee },
+    { id: 'communications', name: 'Communications', icon: MessageSquare },
   ];
 
   return (
-    <div
-      style={{
-        width: 'var(--sidebar-width)',
-        height: '100vh',
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        backgroundColor: 'var(--bg-secondary)',
-        borderRight: '1px solid var(--border-glass)',
-        display: 'flex',
-        flexDirection: 'column',
-        zIndex: 100,
-      }}
+    <aside 
+      className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#0A1A2F] text-white flex flex-col transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:flex-shrink-0 ${
+        isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+      }`}
     >
-      {/* Brand Header */}
-      <div
-        style={{
-          padding: '24px',
-          borderBottom: '1px solid var(--border-glass)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '12px',
-        }}
-      >
-        <div
-          style={{
-            width: '36px',
-            height: '36px',
-            borderRadius: '8px',
-            background: 'linear-gradient(135deg, #f59e0b, #ef4444)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontWeight: 'bold',
-            fontSize: '18px',
-            color: 'white',
-          }}
-        >
-          L
+      <div className="p-6 pt-8 mb-4 lg:pt-8 hidden lg:block">
+        <div className="flex items-baseline gap-1.5 mb-1">
+          <span className="text-[#FFD100] font-bold text-2xl tracking-wide">Ananya</span>
+          <span className="text-white font-semibold text-2xl tracking-wide">World</span>
         </div>
-        <div>
-          <h2 style={{ fontSize: '16px', fontWeight: 800, letterSpacing: '0.5px', color: '#f59e0b' }}>
-            DR. LAL PATHLABS
-          </h2>
-          <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>
-            Staff Admin Hub
-          </span>
-        </div>
+        <span className="text-gray-400 text-xs tracking-wider">Admin Panel</span>
       </div>
+      
+      <div className="lg:hidden h-20" /> 
 
-      {/* Navigation List */}
-      <nav style={{ padding: '20px 12px', flexGrow: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        {menuItems.map((item) => {
+      <nav className="flex-1 px-4 space-y-2 overflow-y-auto custom-scrollbar">
+        {navItems.map((item) => {
+          const Icon = item.icon;
           const isActive = activeTab === item.id;
-          const IconComponent = item.icon;
           return (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                padding: '12px 16px',
-                borderRadius: '10px',
-                border: 'none',
-                background: isActive ? 'linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(6, 182, 212, 0.15))' : 'transparent',
-                color: isActive ? 'var(--accent-secondary)' : 'var(--text-secondary)',
-                fontWeight: isActive ? '600' : '500',
-                fontSize: '14px',
-                textAlign: 'left',
-                cursor: 'pointer',
-                transition: 'var(--transition)',
-                boxShadow: isActive ? 'inset 0 0 0 1px rgba(59, 130, 246, 0.3)' : 'none',
+              onClick={() => {
+                setActiveTab(item.id);
+                setIsSidebarOpen(false); // Close on mobile click
               }}
-              onMouseEnter={(e) => {
-                if (!isActive) {
-                  e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.02)';
-                  e.currentTarget.style.color = 'var(--text-primary)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!isActive) {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                  e.currentTarget.style.color = 'var(--text-secondary)';
-                }
-              }}
+              className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-colors ${
+                isActive 
+                  ? 'bg-[#2563EB] text-white shadow-md' 
+                  : 'text-gray-400 hover:bg-white/5 hover:text-white'
+              }`}
             >
-              <span style={{ display: 'flex', alignItems: 'center' }}>
-                <IconComponent size={18} />
+              <Icon size={20} className={isActive ? 'text-white' : 'text-gray-400'} strokeWidth={isActive ? 2.5 : 2} />
+              <span className={`text-[15px] ${isActive ? 'font-semibold' : 'font-medium'}`}>
+                {item.name}
               </span>
-              <span>{item.label}</span>
             </button>
           );
         })}
       </nav>
 
-      {/* Footer / User Profile Summary */}
-      <div
-        style={{
-          padding: '16px',
-          borderTop: '1px solid var(--border-glass)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '12px',
-          backgroundColor: 'rgba(0, 0, 0, 0.1)',
-        }}
-      >
-        <div
-          style={{
-            width: '40px',
-            height: '40px',
-            borderRadius: '50%',
-            backgroundColor: 'var(--bg-tertiary)',
-            backgroundImage: `url('https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=100&auto=format&fit=crop&q=80')`,
-            backgroundSize: 'cover',
-            border: '2px solid var(--border-glass)',
-          }}
-        />
-        <div style={{ flexGrow: 1, minWidth: 0 }}>
-          <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            Nisha Sharma
-          </h4>
-          <p style={{ fontSize: '11px', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            Admin Director
-          </p>
+      <div className="p-4 border-t border-white/10 mt-auto">
+        <div className="relative mb-2">
+           <button 
+             onClick={() => setShowLogoutConfirm(true)}
+             className="w-full flex items-center gap-3 px-4 py-3 mb-2 text-gray-300 hover:text-white hover:bg-red-500/10 rounded-xl transition-colors"
+           >
+             <LogOut size={20} className="text-red-400" />
+             <span className="text-[15px] font-medium text-red-400">Logout</span>
+           </button>
         </div>
-        <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--accent-success)' }} />
+        <button 
+          onClick={() => setShowProfileModal(true)}
+          className="w-full flex items-center justify-between p-2 hover:bg-white/5 rounded-xl transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-gray-300 overflow-hidden border border-white/20">
+              <img src={profileData.profilePic} alt={profileData.name} className="w-full h-full object-cover" />
+            </div>
+            <div className="text-left hidden sm:block">
+              <p className="text-white text-sm font-bold leading-tight">{profileData.name}</p>
+              <p className="text-gray-400 text-xs">{profileData.role}</p>
+            </div>
+          </div>
+          <Settings size={16} className="text-gray-400" />
+        </button>
       </div>
-    </div>
+    </aside>
   );
-}
+};
+
+export default Sidebar;
