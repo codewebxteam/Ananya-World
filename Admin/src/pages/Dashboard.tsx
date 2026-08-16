@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Users, MapPin, Clock, CalendarCheck2, CalendarX2, 
-  UserPlus, Megaphone, FileDown, ChevronDown, Calendar, IndianRupee
+  UserPlus, Megaphone, ChevronDown, IndianRupee
 } from 'lucide-react';
 import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -27,7 +27,7 @@ export default function Dashboard({ staffList = [], setActiveTab }: DashboardPro
     });
 
     // Fetch recent announcements
-    const announcementsQuery = query(collection(db, 'communications'), orderBy('createdAt', 'desc'), limit(3));
+    const announcementsQuery = query(collection(db, 'communications'), orderBy('createdAt', 'desc'), limit(5));
     const unsubscribeAnnouncements = onSnapshot(announcementsQuery, (snapshot) => {
       const data: any[] = [];
       snapshot.forEach(doc => data.push({ id: doc.id, ...doc.data() }));
@@ -85,12 +85,12 @@ export default function Dashboard({ staffList = [], setActiveTab }: DashboardPro
   const thisMonthPayroll = payrollData.filter(p => p.maturityDate && p.maturityDate.startsWith(currentYearMonth));
 
   const totalPaid = thisMonthPayroll.reduce((sum, p) => sum + (Number(p.paidAmount) || 0), 0);
-  const totalPending = thisMonthPayroll
-    .filter(p => p.status === 'Pending' || p.status === 'Partial')
-    .reduce((sum, p) => sum + Math.max(0, (Number(p.expectedSalary) || 0) - (Number(p.paidAmount) || 0)), 0);
+  
+  // Real monthly expected salaries sum of all active staff
+  const totalPayrollValue = activeStaffList.reduce((sum, s) => sum + (Number(s.salaryAmount) || 0), 0);
+  const totalPending = Math.max(0, totalPayrollValue - totalPaid);
   
   // Salary Progress %
-  const totalPayrollValue = totalPaid + totalPending;
   const paidPercentage = totalPayrollValue > 0 ? Math.round((totalPaid / totalPayrollValue) * 100) : 0;
   const pendingPercentage = totalPayrollValue > 0 ? Math.round((totalPending / totalPayrollValue) * 100) : 0;
 
@@ -357,9 +357,9 @@ export default function Dashboard({ staffList = [], setActiveTab }: DashboardPro
                    <div className="w-8 h-8 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center shrink-0">
                      <Megaphone size={14} />
                    </div>
-                   <div>
-                     <p className="text-sm font-semibold text-gray-900">{ann.title || 'Announcement'}</p>
-                     <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{ann.message}</p>
+                   <div className="flex-1 min-w-0">
+                     <p className="text-sm font-semibold text-gray-900 truncate">{ann.title || `${ann.author || 'Admin'} (${ann.type || 'Chat'})`}</p>
+                     <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{ann.text || ann.message || ''}</p>
                    </div>
                  </div>
                ))
@@ -419,13 +419,13 @@ export default function Dashboard({ staffList = [], setActiveTab }: DashboardPro
           </button>
 
           <button 
-            onClick={() => window.alert('Export Reports feature coming soon!')}
-            className="bg-white border border-gray-200 hover:border-teal-300 rounded-2xl p-4 flex items-center gap-3 transition-colors shadow-sm text-left col-span-2 md:col-span-1"
+            onClick={() => setActiveTab && setActiveTab('gps')}
+            className="bg-white border border-gray-200 hover:border-orange-300 rounded-2xl p-4 flex items-center gap-3 transition-colors shadow-sm text-left col-span-2 md:col-span-1"
           >
-            <div className="bg-teal-50 p-2.5 rounded-xl text-teal-500"><FileDown size={20} /></div>
+            <div className="bg-orange-50 p-2.5 rounded-xl text-orange-500"><MapPin size={20} /></div>
             <div>
-              <p className="text-gray-900 text-xs font-bold mb-0.5">Export Reports</p>
-              <p className="text-gray-400 text-[10px]">Download all reports</p>
+              <p className="text-gray-900 text-xs font-bold mb-0.5">Track Live</p>
+              <p className="text-gray-400 text-[10px]">Live GPS tracking</p>
             </div>
           </button>
 
