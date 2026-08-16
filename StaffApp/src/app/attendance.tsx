@@ -120,6 +120,7 @@ export default function AttendanceScreen() {
           const parsed = JSON.parse(data);
           setUserData(parsed);
           globalAttendanceCache.userData = parsed;
+          setUserRole((parsed.staffType || 'Office').includes('Field') ? 'Field' : 'Office');
 
           // Realtime listener for User Profile updates
           const userDocRef = doc(db, 'users', parsed.uid);
@@ -128,6 +129,7 @@ export default function AttendanceScreen() {
               const freshUserData = snap.data();
               setUserData(freshUserData);
               globalAttendanceCache.userData = freshUserData;
+              setUserRole((freshUserData.staffType || 'Office').includes('Field') ? 'Field' : 'Office');
               await AsyncStorage.setItem('userData', JSON.stringify(freshUserData));
             }
           });
@@ -401,28 +403,40 @@ export default function AttendanceScreen() {
     const attRef = doc(db, 'attendance', attendanceId);
 
     let fetchedAddress = 'Location Acquired';
+    let coords: { latitude: number; longitude: number } | null = null;
+    const isFieldStaff = userRole === 'Field';
+
     try {
       let { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        setLocationAddress('Location Permission Denied');
+        if (isFieldStaff) {
+          Alert.alert("Permission Required", "Field staff must grant location permission to punch in/out.");
+          setIsFetchingLocation(false);
+          return;
+        } else {
+          setLocationAddress('Location Permission Denied');
+        }
+      } else {
+        let location = await Location.getCurrentPositionAsync({});
+        coords = { latitude: location.coords.latitude, longitude: location.coords.longitude };
+        let geocode = await Location.reverseGeocodeAsync({
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude
+        });
+        
+        if (geocode.length > 0) {
+          const addr = geocode[0];
+          fetchedAddress = [addr.name, addr.street, addr.city, addr.region].filter(Boolean).join(', ');
+          setLocationAddress(fetchedAddress);
+        }
+      }
+    } catch (error) {
+      console.log("Location error", error);
+      if (isFieldStaff) {
+        Alert.alert("Location Error", "Could not retrieve location. Please check your GPS settings.");
         setIsFetchingLocation(false);
         return;
       }
-      let location = await Location.getCurrentPositionAsync({});
-      let geocode = await Location.reverseGeocodeAsync({
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude
-      });
-      
-      if (geocode.length > 0) {
-        const addr = geocode[0];
-        fetchedAddress = [addr.name, addr.street, addr.city, addr.region].filter(Boolean).join(', ');
-        setLocationAddress(fetchedAddress);
-      }
-    } catch (error) {
-      setLocationAddress('Error fetching location');
-      setIsFetchingLocation(false);
-      return;
     }
     
     setIsFetchingLocation(false);
@@ -441,6 +455,8 @@ export default function AttendanceScreen() {
           date: today,
           punchIn: now.toISOString(),
           locationIn: fetchedAddress,
+          latitudeIn: isFieldStaff && coords ? coords.latitude : null,
+          longitudeIn: isFieldStaff && coords ? coords.longitude : null,
           status: 'Present'
         });
         Alert.alert("Success", `Punch In successful at ${fetchedAddress}!`);
@@ -459,6 +475,8 @@ export default function AttendanceScreen() {
         await updateDoc(attRef, {
           punchOut: now.toISOString(),
           locationOut: fetchedAddress,
+          latitudeOut: isFieldStaff && coords ? coords.latitude : null,
+          longitudeOut: isFieldStaff && coords ? coords.longitude : null,
           hours: hoursStr
         });
         Alert.alert("Success", "Punch Out successful!");

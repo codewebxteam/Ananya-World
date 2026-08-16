@@ -3,7 +3,7 @@ import {
   Users, MapPin, 
   ChevronDown,
   UserCheck,
-  Search, Plus, Edit, Filter, X, Briefcase, Power, CheckCircle, RefreshCw
+  Search, Plus, Edit, Filter, X, Briefcase, Power, CheckCircle, RefreshCw, CalendarX
 } from 'lucide-react';
 import { updateDoc, doc } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
@@ -207,7 +207,7 @@ export default function Staff({ staffList, branchesList }: StaffProps) {
         <div className="bg-white rounded-3xl p-5 shadow-sm border border-gray-100/80 hover:shadow-md hover:border-red-100 transition-all duration-300 group">
           <div className="flex justify-between items-start">
             <div className="w-12 h-12 rounded-2xl bg-red-50 text-red-500 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
-              <CalendarX2 size={24} strokeWidth={2} />
+              <CalendarX size={24} strokeWidth={2} />
             </div>
             <span className="text-[10px] font-bold text-red-600 bg-red-50/50 px-2 py-0.5 rounded-full">Leaves</span>
           </div>

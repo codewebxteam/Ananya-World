@@ -52,7 +52,15 @@ export default function Dashboard({ staffList = [], setActiveTab }: DashboardPro
   const totalStaff = staffList.length || 0;
   const activeStaffList = staffList.filter(s => s.status === 'Active' || s.status === 'On Duty');
   const activeStaff = activeStaffList.length;
-  const onFieldStaff = staffList.filter(s => s.staffType === 'Field Staff' && (s.status === 'Active' || s.status === 'On Duty')).length;
+  
+  // Field Staff specific metrics
+  const fieldStaffList = staffList.filter(s => s.staffType === 'Field Staff' || s.staffType === 'Field staff');
+  const totalFieldStaff = fieldStaffList.length;
+  const onlineFieldStaff = attendanceData.filter(a => {
+    const s = staffList.find(staff => staff.empId === a.staffId);
+    return s && (s.staffType === 'Field Staff' || s.staffType === 'Field staff') && a.punchIn && !a.punchOut;
+  }).length;
+  const offlineFieldStaff = Math.max(0, totalFieldStaff - onlineFieldStaff);
 
   // Calculate payroll sum (used previously)
 
@@ -136,7 +144,7 @@ export default function Dashboard({ staffList = [], setActiveTab }: DashboardPro
             </div>
             <div>
               <p className="text-gray-500 text-xs font-medium mb-0.5">On Field Duty</p>
-              <h3 className="text-2xl font-bold text-gray-900 leading-tight">{onFieldStaff}</h3>
+              <h3 className="text-2xl font-bold text-gray-900 leading-tight">{onlineFieldStaff}</h3>
             </div>
           </div>
           <p className="text-gray-500 text-[10px] mt-2 ml-[60px]">Live Tracking</p>
@@ -211,22 +219,24 @@ export default function Dashboard({ staffList = [], setActiveTab }: DashboardPro
           </div>
         </div>
 
-        {/* Live GPS Tracking (Map Placeholder) */}
-        <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex flex-col">
+        {/* Field Staff Status */}
+        <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex flex-col justify-between">
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-gray-900 font-bold">Live GPS Tracking <span className="text-gray-500 font-normal text-sm">(On Duty)</span></h3>
-            <span onClick={() => setActiveTab && setActiveTab('gps')} className="text-blue-500 text-xs font-bold cursor-pointer">View All</span>
+            <h3 className="text-gray-900 font-bold">Field Staff Status</h3>
+            <span onClick={() => setActiveTab && setActiveTab('gps')} className="text-blue-500 text-xs font-bold cursor-pointer hover:underline">Track Live</span>
           </div>
-          <div className="flex-1 bg-blue-50/50 rounded-xl relative overflow-hidden border border-gray-100 min-h-[160px]">
-            {/* Map Grid Pattern */}
-            <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'radial-gradient(#CBD5E1 2px, transparent 2px)', backgroundSize: '20px 20px' }}></div>
-            <div className="absolute inset-0 opacity-10 bg-gradient-to-tr from-blue-300 to-green-300"></div>
-            {/* Map Markers & Lines (Dummy) removed for now */}
-            
-            {/* Info Card */}
-            <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur rounded-lg px-3 py-1.5 shadow-sm border border-gray-200">
-              <p className="text-green-600 font-bold text-lg leading-tight">{onFieldStaff}</p>
-              <p className="text-gray-600 text-[9px] font-bold">Staff Tracking</p>
+          <div className="flex-1 flex flex-col justify-center gap-3 py-2">
+            <div className="flex justify-between items-center bg-blue-50/50 p-2.5 rounded-xl border border-blue-50">
+              <span className="text-gray-600 text-xs font-bold">Total Field Staff</span>
+              <span className="text-gray-900 font-bold text-base">{totalFieldStaff}</span>
+            </div>
+            <div className="flex justify-between items-center bg-green-50/50 p-2.5 rounded-xl border border-green-50">
+              <span className="text-gray-600 text-xs font-bold">Online (Active)</span>
+              <span className="text-green-600 font-bold text-base">{onlineFieldStaff}</span>
+            </div>
+            <div className="flex justify-between items-center bg-red-50/50 p-2.5 rounded-xl border border-red-50">
+              <span className="text-gray-600 text-xs font-bold">Offline</span>
+              <span className="text-red-500 font-bold text-base">{offlineFieldStaff}</span>
             </div>
           </div>
         </div>

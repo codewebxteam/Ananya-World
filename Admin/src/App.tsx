@@ -205,7 +205,7 @@ function App() {
             ) : activeTab === 'leaves' ? (
               <Leaves />
             ) : activeTab === 'gps' ? (
-              <LiveTracking />
+              <LiveTracking branchesList={branchesList} />
             ) : activeTab === 'payroll' ? (
               <Salaries />
             ) : null}

@@ -511,10 +511,12 @@ export default function HomeScreen() {
       }
 
       let locationAddress = 'Unknown Location';
+      let coords: { latitude: number; longitude: number } | null = null;
       try {
         let { status } = await Location.requestForegroundPermissionsAsync();
         if (status === 'granted') {
           let location = await Location.getCurrentPositionAsync({});
+          coords = { latitude: location.coords.latitude, longitude: location.coords.longitude };
           let geocode = await Location.reverseGeocodeAsync({
             latitude: location.coords.latitude,
             longitude: location.coords.longitude
@@ -540,6 +542,8 @@ export default function HomeScreen() {
           date: today,
           punchIn: now.toISOString(),
           locationIn: locationAddress,
+          latitudeIn: coords ? coords.latitude : null,
+          longitudeIn: coords ? coords.longitude : null,
           status: 'Present'
         });
         Alert.alert("Success", `Punch In successful at ${locationAddress}!`);
@@ -552,10 +556,12 @@ export default function HomeScreen() {
       setPunchOutTime(now);
 
       let locationAddress = 'Unknown Location';
+      let coords: { latitude: number; longitude: number } | null = null;
       try {
         let { status } = await Location.requestForegroundPermissionsAsync();
         if (status === 'granted') {
           let location = await Location.getCurrentPositionAsync({});
+          coords = { latitude: location.coords.latitude, longitude: location.coords.longitude };
           let geocode = await Location.reverseGeocodeAsync({
             latitude: location.coords.latitude,
             longitude: location.coords.longitude
@@ -576,6 +582,8 @@ export default function HomeScreen() {
         await updateDoc(attRef, {
           punchOut: now.toISOString(),
           locationOut: locationAddress,
+          latitudeOut: coords ? coords.latitude : null,
+          longitudeOut: coords ? coords.longitude : null,
           hours: hoursStr
         });
         Alert.alert("Success", "Punch Out successful!");
