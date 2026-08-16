@@ -5,7 +5,7 @@ import {
   MapPin, LogOut, LogIn, Calendar as CalendarIcon, 
   Clock, History, ChevronLeft, ChevronRight, 
   Check, Info, Timer, BadgeCheck, PieChart, Signal,
-  TrendingUp, CalendarX2, AlertCircle, Plane
+  TrendingUp, CalendarX2, AlertCircle, Plane, Globe, UserCheck, ShieldAlert
 } from 'lucide-react-native';
 import * as Location from 'expo-location';
 import { db } from '../config/firebase';
@@ -23,6 +23,11 @@ let globalAttendanceCache: {
   punchOutTime: Date | null;
   monthlyStats: { present: number; absent: number; late: number; leave: number; totalHours: number };
   isOnLeave: boolean;
+  isHoliday: boolean;
+  isOffCanceled: boolean;
+  isExtraDuty: boolean;
+  isCompanyHoliday: boolean;
+  holidayData: any;
 } = {
   isLoaded: false,
   userData: null,
@@ -32,7 +37,12 @@ let globalAttendanceCache: {
   punchInTime: null,
   punchOutTime: null,
   monthlyStats: { present: 0, absent: 0, late: 0, leave: 0, totalHours: 0 },
-  isOnLeave: false
+  isOnLeave: false,
+  isHoliday: false,
+  isOffCanceled: false,
+  isExtraDuty: false,
+  isCompanyHoliday: false,
+  holidayData: null
 };
 
 const checkAndAutoPunchOut = async (docId: string, data: any, shiftEndTime: string) => {
@@ -101,8 +111,13 @@ export default function AttendanceScreen() {
   const [historyPage, setHistoryPage] = useState(1);
   const PAGE_SIZE = 7;
 
-  // Leave states
+  // Leave & Holiday states
   const [isOnLeave, setIsOnLeave] = useState(globalAttendanceCache.isOnLeave);
+  const [isHoliday, setIsHoliday] = useState(globalAttendanceCache.isHoliday);
+  const [isOffCanceled, setIsOffCanceled] = useState(globalAttendanceCache.isOffCanceled);
+  const [isExtraDuty, setIsExtraDuty] = useState(globalAttendanceCache.isExtraDuty);
+  const [isCompanyHoliday, setIsCompanyHoliday] = useState(globalAttendanceCache.isCompanyHoliday);
+  const [holidayData, setHolidayData] = useState<any>(globalAttendanceCache.holidayData);
   const [rawAttendance, setRawAttendance] = useState<any[]>(globalAttendanceCache.rawAttendance);
   const [approvedLeaves, setApprovedLeaves] = useState<any[]>(globalAttendanceCache.approvedLeaves);
   const [isAttLoaded, setIsAttLoaded] = useState(globalAttendanceCache.isLoaded);
@@ -112,6 +127,10 @@ export default function AttendanceScreen() {
     let unsubAtt: any;
     let unsubUser: any;
     let unsubLeaves: any;
+    let unsubOffCancel: any;
+    let unsubActiveLeave: any;
+    let unsubExtraDuties: any;
+    let unsubCompanyHoliday: any;
 
     const fetchAttendanceData = async () => {
       try {
@@ -222,6 +241,81 @@ export default function AttendanceScreen() {
             globalAttendanceCache.isLoaded = true;
             setIsAttLoaded(true);
           });
+
+          // 3. Determine default Weekly Off day
+          const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+          const todayDayName = daysOfWeek[new Date().getDay()];
+          const defaultWeeklyOff = parsed.weeklyOff || 'Sunday';
+          const isTodayDefaultOff = todayDayName === defaultWeeklyOff;
+          setIsHoliday(isTodayDefaultOff);
+          globalAttendanceCache.isHoliday = isTodayDefaultOff;
+
+          // 4. Listener for Weekly Off Cancellation for Today
+          const qOffCancellations = query(
+            collection(db, 'weekly_off_cancellations'),
+            where('staffId', '==', parsed.empId),
+            where('date', '==', today)
+          );
+          unsubOffCancel = onSnapshot(qOffCancellations, (snapshot) => {
+            const hasCancel = !snapshot.empty;
+            setIsOffCanceled(hasCancel);
+            globalAttendanceCache.isOffCanceled = hasCancel;
+          });
+
+          // 5. Listener for Approved Leaves Today
+          const qActiveLeaves = query(
+            collection(db, 'leaves'),
+            where('staffId', '==', parsed.empId),
+            where('status', '==', 'Approved')
+          );
+          unsubActiveLeave = onSnapshot(qActiveLeaves, (snapshot) => {
+            let activeLeaveFound = false;
+            snapshot.forEach(docSnap => {
+              const data = docSnap.data();
+              if (data.startDate <= today && today <= data.endDate) {
+                activeLeaveFound = true;
+              }
+            });
+            setIsOnLeave(activeLeaveFound);
+            globalAttendanceCache.isOnLeave = activeLeaveFound;
+          });
+
+          // 6. Listener for Extra Duties Today
+          const qExtraDuties = query(
+            collection(db, 'extra_duties'),
+            where('staffId', '==', parsed.empId),
+            where('date', '==', today),
+            where('status', '==', 'Active')
+          );
+          unsubExtraDuties = onSnapshot(qExtraDuties, (snapshot) => {
+            const hasExtra = !snapshot.empty;
+            setIsExtraDuty(hasExtra);
+            globalAttendanceCache.isExtraDuty = hasExtra;
+          });
+
+          // 7. Listener for Company Holidays Today
+          const qCompanyHolidays = query(
+            collection(db, 'company_holidays'),
+            where('date', '==', today)
+          );
+          unsubCompanyHoliday = onSnapshot(qCompanyHolidays, (snapshot) => {
+            if (!snapshot.empty) {
+              const data = snapshot.docs[0].data();
+              const hData = {
+                name: data.name || 'Festival Holiday',
+                wishMessage: data.wishMessage || 'Wishing you a happy holiday!'
+              };
+              setIsCompanyHoliday(true);
+              setHolidayData(hData);
+              globalAttendanceCache.isCompanyHoliday = true;
+              globalAttendanceCache.holidayData = hData;
+            } else {
+              setIsCompanyHoliday(false);
+              setHolidayData(null);
+              globalAttendanceCache.isCompanyHoliday = false;
+              globalAttendanceCache.holidayData = null;
+            }
+          });
         }
       } catch (error) {
         console.error("Error fetching attendance data", error);
@@ -241,6 +335,10 @@ export default function AttendanceScreen() {
       if (unsubAtt) unsubAtt();
       if (unsubUser) unsubUser();
       if (unsubLeaves) unsubLeaves();
+      if (unsubOffCancel) unsubOffCancel();
+      if (unsubActiveLeave) unsubActiveLeave();
+      if (unsubExtraDuties) unsubExtraDuties();
+      if (unsubCompanyHoliday) unsubCompanyHoliday();
     };
   }, []);
 
@@ -532,19 +630,61 @@ export default function AttendanceScreen() {
   }
 
   const getBannerDetails = () => {
+    if (isCompanyHoliday && holidayData) {
+      return {
+        bgClass: 'bg-[#FEF3C7] border-[#FDE68A]', // festive gold
+        iconBgClass: 'bg-[#F59E0B]',
+        icon: <CalendarIcon color="white" size={20} />,
+        title: `Holiday: ${holidayData.name}`,
+        subtitle: `${holidayData.wishMessage} 🎉`,
+        disabled: true
+      };
+    }
     if (isOnLeave) {
       return {
         bgClass: 'bg-purple-50 border-purple-100',
         iconBgClass: 'bg-purple-500',
+        icon: <Plane color="white" size={20} />,
         title: 'Approved Leave',
         subtitle: 'You are on an approved leave today.',
         disabled: true
+      };
+    }
+    if (isHoliday && isOffCanceled) {
+      return {
+        bgClass: 'bg-red-50 border-red-100',
+        iconBgClass: 'bg-red-500',
+        icon: <CalendarIcon color="white" size={20} />,
+        title: 'Weekly Off Cancelled',
+        subtitle: 'Weekly off cancelled by Admin. Please punch in.',
+        disabled: false
+      };
+    }
+    if (isHoliday) {
+      return {
+        bgClass: 'bg-orange-50 border-orange-100',
+        iconBgClass: 'bg-orange-500',
+        icon: <CalendarIcon color="white" size={20} />,
+        title: 'Weekly Off',
+        subtitle: 'Today is your scheduled holiday.',
+        disabled: true
+      };
+    }
+    if (isExtraDuty) {
+      return {
+        bgClass: 'bg-[#EFF6FF] border-blue-100',
+        iconBgClass: 'bg-[#3B82F6]',
+        icon: <UserCheck color="white" size={20} />,
+        title: 'Extra Duty Assigned',
+        subtitle: 'You have extra duty today. Live tracking active.',
+        disabled: false
       };
     }
     if (punchOutTime) {
       return {
         bgClass: 'bg-gray-50 border-gray-200',
         iconBgClass: 'bg-gray-400',
+        icon: <MapPin color="white" size={20} />,
         title: 'Duty Completed',
         subtitle: 'You have punched out for today.',
         disabled: false
@@ -554,26 +694,39 @@ export default function AttendanceScreen() {
       return {
         bgClass: 'bg-[#F0FDF4] border-green-50',
         iconBgClass: 'bg-[#138A43]',
+        icon: <MapPin color="white" size={20} />,
         title: 'Punched In (On Duty)',
         subtitle: 'Location Verified',
         disabled: false
       };
     }
-    if (userRole === 'Office' && !isNearOffice) {
+    if (userRole === 'Field') {
       return {
-        bgClass: 'bg-[#FEF2F2] border-red-100',
-        iconBgClass: 'bg-[#EF4444]',
-        title: 'Outside Office Area',
-        subtitle: 'Not in Office - Move closer to Punch In',
-        disabled: true
+        bgClass: 'bg-[#EFF6FF] border-blue-100',
+        iconBgClass: 'bg-[#3B82F6]',
+        icon: <Globe color="white" size={20} />,
+        title: 'Location Acquired',
+        subtitle: 'You can punch in from anywhere.',
+        disabled: false
+      };
+    }
+    if (userRole === 'Office' && isNearOffice) {
+      return {
+        bgClass: 'bg-[#F0FDF4] border-green-50',
+        iconBgClass: 'bg-[#138A43]',
+        icon: <MapPin color="white" size={20} />,
+        title: 'You are in office',
+        subtitle: 'Office Location Verified.',
+        disabled: false
       };
     }
     return {
-      bgClass: 'bg-[#F0FDF4] border-green-50',
-      iconBgClass: 'bg-[#138A43]',
-      title: 'Not Punched In',
-      subtitle: 'Press Punch In to Start',
-      disabled: false
+      bgClass: 'bg-[#FEF2F2] border-red-100',
+      iconBgClass: 'bg-[#EF4444]',
+      icon: <ShieldAlert color="white" size={20} />,
+      title: 'Outside Office Area',
+      subtitle: 'Move closer to office to Punch In.',
+      disabled: true
     };
   };
 
@@ -602,25 +755,45 @@ export default function AttendanceScreen() {
               <View className={`flex-row items-center px-2 py-1 rounded-full gap-1 ${
                 isOnLeave 
                   ? 'bg-purple-100' 
-                  : punchInTime && !punchOutTime 
-                    ? 'bg-[#E6F4EA]' 
-                    : 'bg-[#FEE2E2]'
+                  : isCompanyHoliday 
+                    ? 'bg-amber-100'
+                    : isHoliday && !isOffCanceled 
+                      ? 'bg-orange-100'
+                      : punchInTime && !punchOutTime 
+                        ? 'bg-[#E6F4EA]' 
+                        : 'bg-[#FEE2E2]'
               }`}>
                 <View className={`w-2 h-2 rounded-full ${
                   isOnLeave 
                     ? 'bg-purple-600' 
-                    : punchInTime && !punchOutTime 
-                      ? 'bg-[#138A43]' 
-                      : 'bg-[#EF4444]'
+                    : isCompanyHoliday 
+                      ? 'bg-[#D97706]'
+                      : isHoliday && !isOffCanceled 
+                        ? 'bg-orange-500'
+                        : punchInTime && !punchOutTime 
+                          ? 'bg-[#138A43]' 
+                          : 'bg-[#EF4444]'
                 }`} />
                 <Text className={`text-xs font-semibold ${
                   isOnLeave 
                     ? 'text-purple-700' 
-                    : punchInTime && !punchOutTime 
-                      ? 'text-[#138A43]' 
-                      : 'text-[#EF4444]'
+                    : isCompanyHoliday 
+                      ? 'text-[#D97706]'
+                      : isHoliday && !isOffCanceled 
+                        ? 'text-orange-600'
+                        : punchInTime && !punchOutTime 
+                          ? 'text-[#138A43]' 
+                          : 'text-[#EF4444]'
                 }`}>
-                  {isOnLeave ? 'On Leave' : punchInTime && !punchOutTime ? 'On Duty' : 'Not Punched In'}
+                  {isOnLeave 
+                    ? 'On Leave' 
+                    : isCompanyHoliday 
+                      ? 'Holiday'
+                      : isHoliday && !isOffCanceled 
+                        ? 'Weekly Off'
+                        : punchInTime && !punchOutTime 
+                          ? 'On Duty' 
+                          : 'Not Punched In'}
                 </Text>
               </View>
             </View>
@@ -628,13 +801,25 @@ export default function AttendanceScreen() {
               <Text className={`text-xs font-medium ${
                 isOnLeave 
                   ? 'text-purple-600' 
-                  : punchInTime && !punchOutTime 
-                    ? 'text-[#138A43]' 
-                    : 'text-gray-500'
+                  : isCompanyHoliday 
+                    ? 'text-amber-600'
+                    : isHoliday && !isOffCanceled 
+                      ? 'text-orange-600'
+                      : punchInTime && !punchOutTime 
+                        ? 'text-[#138A43]' 
+                        : 'text-gray-500'
               }`}>
-                {isOnLeave ? 'On Leave' : punchInTime && !punchOutTime ? 'Live Tracking' : 'Not Tracking'}
+                {isOnLeave 
+                  ? 'On Leave' 
+                  : isCompanyHoliday 
+                    ? 'Public Holiday'
+                    : isHoliday && !isOffCanceled 
+                      ? 'Weekly Off'
+                      : punchInTime && !punchOutTime 
+                        ? 'Live Tracking' 
+                        : 'Not Tracking'}
               </Text>
-              <Signal color={isOnLeave ? "#8B5CF6" : punchInTime && !punchOutTime ? "#138A43" : "#6B7280"} size={14} strokeWidth={3} />
+              <Signal color={isOnLeave ? "#8B5CF6" : isCompanyHoliday ? "#D97706" : (isHoliday && !isOffCanceled) ? "#F97316" : punchInTime && !punchOutTime ? "#138A43" : "#6B7280"} size={14} strokeWidth={3} />
             </View>
           </View>
 
@@ -642,18 +827,18 @@ export default function AttendanceScreen() {
           <View className={`rounded-2xl p-4 flex-row justify-between items-center mb-4 border ${bannerData.bgClass}`}>
             <View className="flex-row items-center gap-3">
               <View className={`w-10 h-10 rounded-full items-center justify-center ${bannerData.iconBgClass}`}>
-                {isOnLeave ? <Plane color="white" size={20} /> : <MapPin color="white" size={20} />}
+                {bannerData.icon}
               </View>
               <View>
                 <Text className="text-black font-bold text-[15px]">{bannerData.title}</Text>
                 <Text className="text-gray-500 text-[11px] mt-0.5">{bannerData.subtitle}</Text>
               </View>
             </View>
-            {!punchOutTime && (
+            {!punchOutTime && (!bannerData.disabled || bannerData.title === 'Outside Office Area') && (
               <TouchableOpacity 
                 activeOpacity={0.8}
                 onPress={handlePunch}
-                disabled={isFetchingLocation || bannerData.disabled}
+                disabled={isFetchingLocation || (bannerData.disabled && bannerData.title === 'Outside Office Area')}
                 className={`px-3 py-2.5 rounded-xl shadow-sm flex-row items-center gap-1 ${
                   bannerData.disabled 
                     ? 'bg-gray-300 shadow-none' 
