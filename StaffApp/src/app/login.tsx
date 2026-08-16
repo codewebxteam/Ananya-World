@@ -132,16 +132,16 @@ export default function LoginScreen() {
             <Text className="text-[#003B95] text-2xl font-black mb-1">Welcome Back, 👋</Text>
             <Text className="text-gray-500 text-xs font-medium mb-8">Sign in to your account to continue</Text>
 
-            {/* Input 1: Employee ID */}
+            {/* Input 1: Email ID */}
             <View className="mb-5">
-              <Text className="text-gray-400 text-[11px] font-bold uppercase tracking-wider mb-2 ml-1">Employee ID / Email</Text>
+              <Text className="text-gray-400 text-[11px] font-bold uppercase tracking-wider mb-2 ml-1">Email ID</Text>
               <View className="bg-[#F8FAFC] border border-gray-100 rounded-[20px] flex-row items-center px-4 h-16 shadow-sm">
                 <View className="w-10 h-10 rounded-full bg-[#EEF5FF] items-center justify-center mr-3">
                   <User color="#208AEF" size={20} strokeWidth={2.5} />
                 </View>
                 <TextInput 
                   className="flex-1 text-black text-[15px] font-medium"
-                  placeholder="e.g. AA-1024"
+                  placeholder="e.g. staff@gmail.com"
                   placeholderTextColor="#9CA3AF"
                   value={username}
                   onChangeText={setUsername}
