@@ -8,14 +8,56 @@ import '../global.css';
 import Header from '../components/Header';
 import BottomNav, { TabName } from '../components/BottomNav';
 
-import { BackHandler, Alert, ToastAndroid, Platform } from 'react-native';
-import { useEffect, useRef } from 'react';
+import { BackHandler, Alert, ToastAndroid, Platform, Keyboard } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Animated, Text } from 'react-native';
+import { Briefcase } from 'lucide-react-native';
 
-export default function RootLayout() {
+function InnerLayout() {
   const pathname = usePathname();
   const tabHistoryRef = useRef<string[]>(['/']);
+
+  const [isReady, setIsReady] = useState(false);
+  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(0.3)).current;
+
+  // Blinking/pulsing animation for loader
+  useEffect(() => {
+    if (!isReady) {
+      const pulse = Animated.loop(
+        Animated.sequence([
+          Animated.timing(fadeAnim, {
+            toValue: 1,
+            duration: 900,
+            useNativeDriver: true,
+          }),
+          Animated.timing(fadeAnim, {
+            toValue: 0.3,
+            duration: 900,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      pulse.start();
+      return () => pulse.stop();
+    }
+  }, [isReady]);
+
+  // Keyboard visibility listener to hide BottomNav when typing
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, () => setIsKeyboardOpen(true));
+    const hideSub = Keyboard.addListener(hideEvent, () => setIsKeyboardOpen(false));
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   // Handle Authentication Persistence
   useEffect(() => {
@@ -31,6 +73,8 @@ export default function RootLayout() {
         }
       } catch (error) {
         console.error('Failed to load auth status', error);
+      } finally {
+        setIsReady(true);
       }
     };
     
@@ -49,7 +93,7 @@ export default function RootLayout() {
         return true;
       }
       
-      const mainTabs = ['/', '/attendance', '/salary', '/chat', '/account', '/account/'];
+      const mainTabs = ['/', '/attendance', '/salary', '/chat', '/leaves', '/account', '/account/'];
       const isMainTab = mainTabs.includes(pathname);
       
       // If user is on a main tab, use custom tab history logic
@@ -118,6 +162,7 @@ export default function RootLayout() {
     if (pathname === '/attendance') return 'Attendance';
     if (pathname === '/salary') return 'Salary';
     if (pathname === '/chat') return 'Chat';
+    if (pathname === '/leaves') return 'Leaves';
     if (pathname === '/account' || pathname.startsWith('/account/')) return 'Account';
     return 'Home';
   };
@@ -137,6 +182,7 @@ export default function RootLayout() {
     if (tab === 'Attendance') routeTo = '/attendance';
     if (tab === 'Salary') routeTo = '/salary';
     if (tab === 'Chat') routeTo = '/chat';
+    if (tab === 'Leaves') routeTo = '/leaves';
     if (tab === 'Account') routeTo = '/account';
 
     // Update custom tab history (remove if exists to avoid repeats, then push to end)
@@ -151,6 +197,24 @@ export default function RootLayout() {
   // Screens that have their own custom headers
   const hideGlobalHeader = pathname.startsWith('/account/') && pathname !== '/account/index' || pathname === '/login';
 
+  if (!isReady) {
+    return (
+      <View className="flex-1 bg-[#003B95] items-center justify-center">
+        <Animated.View style={{ opacity: fadeAnim, alignItems: 'center' }}>
+          <View className="w-20 h-20 bg-white rounded-[24px] items-center justify-center shadow-lg mb-5">
+            <Briefcase color="#003B95" size={40} strokeWidth={2} />
+          </View>
+          <Text className="text-3xl font-black text-white tracking-wide mb-1">
+            Ananya World
+          </Text>
+          <Text className="text-[#FFD100] text-xs font-bold tracking-widest uppercase mt-1">
+            Staff Portal Loading...
+          </Text>
+        </Animated.View>
+      </View>
+    );
+  }
+
   return (
     <View className="flex-1 bg-[#F5F7FA]">
       {/* Fixed Header - Same on all screens except custom ones */}
@@ -163,6 +227,7 @@ export default function RootLayout() {
           <Stack.Screen name="attendance" />
           <Stack.Screen name="salary" />
           <Stack.Screen name="chat" />
+          <Stack.Screen name="leaves" />
           <Stack.Screen name="account/index" />
           <Stack.Screen name="account/profile" />
           <Stack.Screen name="account/job-details" />
@@ -176,7 +241,7 @@ export default function RootLayout() {
       </View>
 
       {/* Global Bottom Navigation */}
-      {pathname !== '/login' && (
+      {pathname !== '/login' && !isKeyboardOpen && (
         <View className="absolute bottom-0 w-full bg-transparent">
           <BottomNav 
             activeTab={getActiveTab()} 
@@ -186,4 +251,8 @@ export default function RootLayout() {
       )}
     </View>
   );
+}
+
+export default function RootLayout() {
+  return <InnerLayout />;
 }

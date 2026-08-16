@@ -9,29 +9,83 @@ import { Eye, EyeOff, Lock, User, Briefcase, ArrowRight } from 'lucide-react-nat
 import { router } from 'expo-router';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { auth, db } from '../config/firebase';
+import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 
 export default function LoginScreen() {
   const [username, setUsername] = useState('');
+  const [loading, setLoading] = useState(false);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
   const handleLogin = async () => {
     if (!username || !password) {
-      Alert.alert("Error", "Please enter both Employee ID and Password.");
+      Alert.alert("Error", "Please enter both Email and Password.");
       return;
     }
-    // Save login state
-    await AsyncStorage.setItem('isLoggedIn', 'true');
-    // Navigate to home and prevent going back to login
-    router.replace('/');
+    
+    setLoading(true);
+    try {
+      // Firebase Authentication
+      const userCredential = await signInWithEmailAndPassword(auth, username.trim(), password);
+      const user = userCredential.user;
+      
+      // Fetch user profile from Firestore
+      const userDocRef = doc(db, 'users', user.uid);
+      const userDocSnap = await getDoc(userDocRef);
+      
+      if (!userDocSnap.exists()) {
+        throw new Error("User profile not found in system. Please contact HR.");
+      }
+      
+      const userData = userDocSnap.data();
+
+      // Save login state and data
+      await AsyncStorage.setItem('isLoggedIn', 'true');
+      await AsyncStorage.setItem('uid', user.uid);
+      await AsyncStorage.setItem('userData', JSON.stringify(userData));
+      
+      // Navigate to home and prevent going back to login
+      router.replace('/');
+    } catch (error: any) {
+      let errorMessage = error.message || "Invalid credentials. Please try again.";
+      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+        errorMessage = "Incorrect email or password.";
+      }
+      Alert.alert("Login Failed", errorMessage);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleForgotPassword = () => {
-    Alert.alert(
-      "Reset Password",
-      "Please contact your Admin or HR at support@aapartners.com to reset your password.",
-      [{ text: "OK" }]
-    );
+  const handleForgotPassword = async () => {
+    const emailToReset = username.trim();
+
+    if (!emailToReset || !emailToReset.includes('@')) {
+      Alert.alert(
+        "Enter Your Email",
+        "Please enter your registered Email address in the Email field above first, then click 'Forgot Password?' to receive the reset link."
+      );
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await sendPasswordResetEmail(auth, emailToReset);
+      Alert.alert(
+        "Reset Link Sent 📩",
+        `A password reset email has been sent to ${emailToReset}. Please check your inbox/spam folder to reset your password.`
+      );
+    } catch (error: any) {
+      let msg = error.message || "Failed to send password reset email.";
+      if (error.code === 'auth/user-not-found') {
+        msg = "No user account found with this email address.";
+      }
+      Alert.alert("Reset Failed", msg);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -134,10 +188,13 @@ export default function LoginScreen() {
             <TouchableOpacity 
               activeOpacity={0.8}
               onPress={handleLogin}
-              className="bg-[#003B95] rounded-[20px] h-16 flex-row items-center justify-center shadow-lg"
+              disabled={loading}
+              className={`bg-[#003B95] rounded-[20px] h-16 flex-row items-center justify-center shadow-lg ${loading ? 'opacity-70' : ''}`}
             >
-              <Text className="text-white font-bold text-lg mr-2 tracking-wide">Secure Login</Text>
-              <ArrowRight color="white" size={20} strokeWidth={3} />
+              <Text className="text-white font-bold text-lg mr-2 tracking-wide">
+                {loading ? 'Signing in...' : 'Secure Login'}
+              </Text>
+              {!loading && <ArrowRight color="white" size={20} strokeWidth={3} />}
             </TouchableOpacity>
           </View>
 
@@ -146,7 +203,7 @@ export default function LoginScreen() {
             <View className="items-center pb-8 mt-auto">
               <Text className="text-gray-400 text-[11px] font-medium text-center leading-relaxed">
                 Protected by Enterprise Security.{"\n"}
-                © 2025 Ananya World Ltd.
+                © 2026 Ananya World Ltd.
               </Text>
             </View>
           </SafeAreaView>

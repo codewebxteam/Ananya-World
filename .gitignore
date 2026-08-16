@@ -1,2 +1,9 @@
 node_modules/
 .DS_Store
+*.env
+.env
+Admin/.env
+StaffApp/.env
+dist/
+build/
+.expo/

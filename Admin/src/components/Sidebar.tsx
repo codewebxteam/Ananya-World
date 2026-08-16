@@ -1,7 +1,7 @@
 import React from 'react';
 import { 
   LayoutDashboard, Users, CalendarDays, MapPin, 
-  IndianRupee, MessageSquare, ChevronDown, LogOut, Settings 
+  IndianRupee, MessageSquare, ChevronDown, LogOut, Settings, Building, CalendarRange
 } from 'lucide-react';
 import type { ProfileData } from './ProfileModal';
 
@@ -26,8 +26,10 @@ const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const navItems = [
     { id: 'dashboard', name: 'Dashboard', icon: LayoutDashboard },
+    { id: 'branches', name: 'Branches', icon: Building },
     { id: 'staff', name: 'Staff Directory', icon: Users },
     { id: 'attendance', name: 'Attendance Logs', icon: CalendarDays },
+    { id: 'leaves', name: 'Leaves & Offs', icon: CalendarRange },
     { id: 'gps', name: 'Live GPS Tracking', icon: MapPin },
     { id: 'payroll', name: 'Payroll & Salaries', icon: IndianRupee },
     { id: 'communications', name: 'Communications', icon: MessageSquare },

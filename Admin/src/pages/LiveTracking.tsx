@@ -8,22 +8,10 @@ import {
 
 export default function LiveTracking() {
   // Dummy data for map staff list
-  const mapStaffList = [
-    { id: 1, name: 'Rahul Verma', role: 'Field Specimen Collector', location: 'Gorakhpur, UP', status: 'On Duty', time: '09:28 AM', dot: 'bg-green-500', avatar: 'https://randomuser.me/api/portraits/men/32.jpg' },
-    { id: 2, name: 'Amit Kumar', role: 'Field Executive', location: 'Siwan, Bihar', status: 'On Duty', time: '09:27 AM', dot: 'bg-green-500', avatar: 'https://randomuser.me/api/portraits/men/46.jpg' },
-    { id: 3, name: 'Vikram Singh', role: 'Logistics Executive', location: 'Deoria, UP', status: 'On Duty', time: '09:25 AM', dot: 'bg-green-500', avatar: 'https://randomuser.me/api/portraits/men/22.jpg' },
-    { id: 4, name: 'Neha Sharma', role: 'Lab Technician', location: 'Basti, UP', status: 'On Field', time: '09:24 AM', dot: 'bg-yellow-500', avatar: 'https://randomuser.me/api/portraits/women/44.jpg' },
-    { id: 5, name: 'Sandeep Yadav', role: 'Field Specimen Collector', location: '-', status: 'Offline', time: '-', dot: 'bg-gray-400', avatar: 'https://randomuser.me/api/portraits/men/85.jpg' },
-  ];
+  const mapStaffList: any[] = [];
 
   // Dummy data for recent staff table
-  const recentStaffData = [
-    { id: 1, name: 'Rahul Verma', location: 'Gorakhpur, UP', updated: '1 min ago', battery: 85, batColor: 'bg-green-500', status: 'On Duty', avatar: 'https://randomuser.me/api/portraits/men/32.jpg' },
-    { id: 2, name: 'Amit Kumar', location: 'Siwan, Bihar', updated: '2 min ago', battery: 68, batColor: 'bg-yellow-500', status: 'On Duty', avatar: 'https://randomuser.me/api/portraits/men/46.jpg' },
-    { id: 3, name: 'Vikram Singh', location: 'Deoria, UP', updated: '3 min ago', battery: 55, batColor: 'bg-orange-500', status: 'On Duty', avatar: 'https://randomuser.me/api/portraits/men/22.jpg' },
-    { id: 4, name: 'Neha Sharma', location: 'Basti, UP', updated: '4 min ago', battery: 72, batColor: 'bg-green-500', status: 'On Field', avatar: 'https://randomuser.me/api/portraits/women/44.jpg' },
-    { id: 5, name: 'Kajal Verma', location: 'Maharajganj, UP', updated: '5 min ago', battery: 90, batColor: 'bg-green-500', status: 'On Duty', avatar: 'https://randomuser.me/api/portraits/women/33.jpg' },
-  ];
+  const recentStaffData: any[] = [];
 
   const renderStatus = (status: string) => {
     switch(status) {
@@ -43,7 +31,7 @@ export default function LiveTracking() {
             <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-500 shrink-0"><Users size={24} strokeWidth={2} /></div>
             <div>
               <p className="text-gray-500 text-xs font-medium mb-0.5">Staff Online</p>
-              <h3 className="text-2xl font-bold text-gray-900 leading-tight">48</h3>
+              <h3 className="text-2xl font-bold text-gray-900 leading-tight">0</h3>
             </div>
           </div>
           <p className="text-green-600 text-[10px] font-medium mt-2 ml-[60px]">Currently Online</p>
@@ -54,7 +42,7 @@ export default function LiveTracking() {
             <div className="w-12 h-12 rounded-full bg-green-50 flex items-center justify-center text-green-500 shrink-0"><MapPin size={24} strokeWidth={2} /></div>
             <div>
               <p className="text-gray-500 text-xs font-medium mb-0.5">On Field</p>
-              <h3 className="text-2xl font-bold text-gray-900 leading-tight">36</h3>
+              <h3 className="text-2xl font-bold text-gray-900 leading-tight">0</h3>
             </div>
           </div>
           <p className="text-green-600 text-[10px] font-medium mt-2 ml-[60px]">Active in Field</p>
@@ -65,7 +53,7 @@ export default function LiveTracking() {
             <div className="w-12 h-12 rounded-full bg-orange-50 flex items-center justify-center text-orange-500 shrink-0"><Activity size={24} strokeWidth={2} /></div>
             <div>
               <p className="text-gray-500 text-xs font-medium mb-0.5">Total Tracking</p>
-              <h3 className="text-2xl font-bold text-gray-900 leading-tight">48</h3>
+              <h3 className="text-2xl font-bold text-gray-900 leading-tight">0</h3>
             </div>
           </div>
           <p className="text-gray-500 text-[10px] font-medium mt-2 ml-[60px]">Live Tracking</p>
@@ -76,7 +64,7 @@ export default function LiveTracking() {
             <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center text-red-500 shrink-0"><WifiOff size={24} strokeWidth={2} /></div>
             <div>
               <p className="text-gray-500 text-xs font-medium mb-0.5">Offline</p>
-              <h3 className="text-2xl font-bold text-gray-900 leading-tight">208</h3>
+              <h3 className="text-2xl font-bold text-gray-900 leading-tight">0</h3>
             </div>
           </div>
           <p className="text-red-500 text-[10px] font-medium mt-2 ml-[60px]">Not Online</p>
@@ -87,7 +75,7 @@ export default function LiveTracking() {
             <div className="w-12 h-12 rounded-full bg-purple-50 flex items-center justify-center text-purple-600 shrink-0"><Timer size={24} strokeWidth={2} /></div>
             <div>
               <p className="text-gray-500 text-xs font-medium mb-0.5">Avg. Session Time</p>
-              <h3 className="text-2xl font-bold text-gray-900 leading-tight">6h 15m</h3>
+              <h3 className="text-2xl font-bold text-gray-900 leading-tight">0h 0m</h3>
             </div>
           </div>
           <p className="text-gray-500 text-[10px] font-medium mt-2 ml-[60px]">Today</p>
@@ -100,7 +88,7 @@ export default function LiveTracking() {
         {/* Left Panel: Staff on Map List */}
         <div className="bg-white rounded-[20px] shadow-sm border border-gray-100 flex flex-col h-[500px]">
           <div className="p-4 border-b border-gray-100">
-            <h2 className="text-gray-900 font-bold mb-3">Staff on Map <span className="text-gray-500 font-normal text-sm">(48)</span></h2>
+            <h2 className="text-gray-900 font-bold mb-3">Staff on Map <span className="text-gray-500 font-normal text-sm">(0)</span></h2>
             <div className="flex gap-2">
               <div className="flex-1 relative">
                 <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
@@ -113,28 +101,32 @@ export default function LiveTracking() {
           </div>
           
           <div className="flex-1 overflow-y-auto">
-            {mapStaffList.map((staff, idx) => (
-              <div key={staff.id} className={`p-4 flex items-start gap-3 ${idx !== mapStaffList.length - 1 ? 'border-b border-gray-50' : ''} hover:bg-gray-50/50 cursor-pointer transition-colors`}>
-                <div className="flex items-center gap-2 mt-1">
-                  <div className={`w-2 h-2 rounded-full ${staff.dot}`}></div>
-                  <img src={staff.avatar} alt={staff.name} className="w-10 h-10 rounded-full object-cover border border-gray-200" />
-                </div>
-                <div className="flex-1">
-                  <div className="flex justify-between items-start mb-0.5">
-                    <h4 className="text-sm font-bold text-gray-900">{staff.name}</h4>
-                    {renderStatus(staff.status)}
+            {mapStaffList.length === 0 ? (
+              <div className="p-4 text-center text-gray-500 text-sm">No staff active on map.</div>
+            ) : (
+              mapStaffList.map((staff, idx) => (
+                <div key={staff.id} className={`p-4 flex items-start gap-3 ${idx !== mapStaffList.length - 1 ? 'border-b border-gray-50' : ''} hover:bg-gray-50/50 cursor-pointer transition-colors`}>
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className={`w-2 h-2 rounded-full ${staff.dot}`}></div>
+                    <img src={staff.avatar} alt={staff.name} className="w-10 h-10 rounded-full object-cover border border-gray-200" />
                   </div>
-                  <p className="text-[11px] text-gray-500 font-medium mb-1">{staff.role}</p>
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-1 text-gray-500">
-                      <MapPin size={12} />
-                      <span className="text-[11px]">{staff.location}</span>
+                  <div className="flex-1">
+                    <div className="flex justify-between items-start mb-0.5">
+                      <h4 className="text-sm font-bold text-gray-900">{staff.name}</h4>
+                      {renderStatus(staff.status)}
                     </div>
-                    <span className="text-[10px] text-gray-400 font-medium">{staff.time}</span>
+                    <p className="text-[11px] text-gray-500 font-medium mb-1">{staff.role}</p>
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-1 text-gray-500">
+                        <MapPin size={12} />
+                        <span className="text-[11px]">{staff.location}</span>
+                      </div>
+                      <span className="text-[10px] text-gray-400 font-medium">{staff.time}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
           
           <div className="p-3 border-t border-gray-100 flex justify-between items-center cursor-pointer hover:bg-gray-50 rounded-b-[20px] group transition-colors">
@@ -165,35 +157,17 @@ export default function LiveTracking() {
           {/* Top Right: Map Legend */}
           <div className="absolute top-4 right-4 bg-white/90 backdrop-blur rounded-xl p-3 shadow-sm border border-gray-200 space-y-2">
             <div className="flex items-center gap-2 text-xs font-medium text-gray-700">
-              <span className="text-green-600 font-bold w-4 text-right">48</span> Online
+              <span className="text-green-600 font-bold w-4 text-right">0</span> Online
             </div>
             <div className="flex items-center gap-2 text-xs font-medium text-gray-700">
-              <span className="text-orange-500 font-bold w-4 text-right">38</span> On Field
+              <span className="text-orange-500 font-bold w-4 text-right">0</span> On Field
             </div>
             <div className="flex items-center gap-2 text-xs font-medium text-gray-700">
-              <span className="text-gray-500 font-bold w-4 text-right">088</span> Offline
+              <span className="text-gray-500 font-bold w-4 text-right">0</span> Offline
             </div>
           </div>
 
-          {/* Dummy Avatars on Map */}
-          <div className="absolute top-[30%] left-[25%] flex flex-col items-center">
-            <div className="w-9 h-9 rounded-full border-[3px] border-green-500 shadow-md overflow-hidden relative"><img src="https://randomuser.me/api/portraits/women/44.jpg" alt="user" className="w-full h-full object-cover" /></div>
-            <div className="bg-white/90 px-1.5 py-0.5 rounded text-[9px] font-bold mt-1 text-gray-700 shadow-sm">Basti</div>
-          </div>
-          <div className="absolute top-[40%] left-[50%] flex flex-col items-center">
-            <div className="w-10 h-10 rounded-full border-[3px] border-green-500 shadow-lg overflow-hidden relative z-10"><img src="https://randomuser.me/api/portraits/men/32.jpg" alt="user" className="w-full h-full object-cover" /></div>
-            <div className="bg-white/90 px-2 py-0.5 rounded text-[11px] font-bold mt-1 text-gray-900 shadow-sm">Gorakhpur</div>
-          </div>
-          <div className="absolute top-[55%] left-[65%] flex flex-col items-center">
-            <div className="w-9 h-9 rounded-full border-[3px] border-orange-500 shadow-md overflow-hidden relative"><img src="https://randomuser.me/api/portraits/women/68.jpg" alt="user" className="w-full h-full object-cover" /></div>
-          </div>
-          <div className="absolute top-[45%] left-[80%] flex flex-col items-center">
-            <div className="w-9 h-9 rounded-full border-[3px] border-green-500 shadow-md overflow-hidden relative"><img src="https://randomuser.me/api/portraits/men/46.jpg" alt="user" className="w-full h-full object-cover" /></div>
-            <div className="bg-white/90 px-1.5 py-0.5 rounded text-[10px] font-bold mt-1 text-gray-700 shadow-sm">Siwan</div>
-          </div>
-          <div className="absolute top-[25%] left-[70%] flex flex-col items-center">
-            <div className="w-8 h-8 rounded-full border-[2.5px] border-green-500 shadow-md overflow-hidden relative"><img src="https://randomuser.me/api/portraits/men/22.jpg" alt="user" className="w-full h-full object-cover" /></div>
-          </div>
+          {/* Dummy Avatars on Map (Removed) */}
 
           {/* Bottom Right: Zoom Controls */}
           <div className="absolute bottom-4 right-4 flex flex-col gap-2">
@@ -238,30 +212,35 @@ export default function LiveTracking() {
                 </tr>
               </thead>
               <tbody>
-                {recentStaffData.map((staff) => (
-                  <tr key={staff.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50">
-                    <td className="py-3 px-2 text-sm text-gray-600 font-medium">{staff.id}</td>
-                    <td className="py-3 px-2">
-                      <div className="flex items-center gap-2">
-                        <img src={staff.avatar} alt={staff.name} className="w-7 h-7 rounded-full object-cover" />
-                        <span className="text-sm font-bold text-gray-900">{staff.name}</span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-2 text-sm text-gray-600">{staff.location}</td>
-                    <td className="py-3 px-2 text-sm text-gray-600">{staff.updated}</td>
-                    <td className="py-3 px-2">
-                      <div className="flex items-center gap-1.5">
-                        {/* Dummy battery icon representation */}
-                        <div className="w-5 h-2.5 rounded-[2px] border border-gray-300 p-[1px] relative flex">
-                          <div className={`h-full rounded-[1px] ${staff.batColor}`} style={{ width: `${staff.battery}%` }}></div>
-                          <div className="absolute -right-[2px] top-[2px] w-[2px] h-1 bg-gray-300 rounded-r-sm"></div>
-                        </div>
-                        <span className="text-xs text-gray-700 font-medium">{staff.battery}%</span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-2">{renderStatus(staff.status)}</td>
+                {recentStaffData.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-gray-500 text-sm">No recent active staff found.</td>
                   </tr>
-                ))}
+                ) : (
+                  recentStaffData.map((staff) => (
+                    <tr key={staff.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50">
+                      <td className="py-3 px-2 text-sm text-gray-600 font-medium">{staff.id}</td>
+                      <td className="py-3 px-2">
+                        <div className="flex items-center gap-2">
+                          <img src={staff.avatar} alt={staff.name} className="w-7 h-7 rounded-full object-cover" />
+                          <span className="text-sm font-bold text-gray-900">{staff.name}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-2 text-sm text-gray-600">{staff.location}</td>
+                      <td className="py-3 px-2 text-sm text-gray-600">{staff.updated}</td>
+                      <td className="py-3 px-2">
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-5 h-2.5 rounded-[2px] border border-gray-300 p-[1px] relative flex">
+                            <div className={`h-full rounded-[1px] ${staff.batColor}`} style={{ width: `${staff.battery}%` }}></div>
+                            <div className="absolute -right-[2px] top-[2px] w-[2px] h-1 bg-gray-300 rounded-r-sm"></div>
+                          </div>
+                          <span className="text-xs text-gray-700 font-medium">{staff.battery}%</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-2">{renderStatus(staff.status)}</td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -280,7 +259,7 @@ export default function LiveTracking() {
             <div className="relative w-36 h-36 rounded-full flex items-center justify-center shrink-0" 
                  style={{ background: 'conic-gradient(#10B981 0% 75%, #F59E0B 75% 91%, #9CA3AF 91% 100%)' }}>
               <div className="absolute w-[100px] h-[100px] bg-white rounded-full flex flex-col items-center justify-center shadow-inner">
-                <span className="text-3xl font-bold text-gray-900 leading-tight">48</span>
+                <span className="text-3xl font-bold text-gray-900 leading-tight">0</span>
                 <span className="text-gray-500 text-[10px] font-medium leading-tight text-center mt-1">Total<br/>Tracking</span>
               </div>
             </div>
@@ -288,15 +267,15 @@ export default function LiveTracking() {
             <div className="flex-1 w-full space-y-4">
               <div className="flex justify-between items-center text-sm">
                 <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-green-500"></div><span className="text-gray-600 font-medium">On Duty</span></div>
-                <span className="text-gray-900 font-semibold">36 <span className="text-gray-400 font-normal text-xs ml-1">(75%)</span></span>
+                <span className="text-gray-900 font-semibold">0 <span className="text-gray-400 font-normal text-xs ml-1">(0%)</span></span>
               </div>
               <div className="flex justify-between items-center text-sm">
                 <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-orange-500"></div><span className="text-gray-600 font-medium">On Field</span></div>
-                <span className="text-gray-900 font-semibold">12 <span className="text-gray-400 font-normal text-xs ml-1">(16.67%)</span></span>
+                <span className="text-gray-900 font-semibold">0 <span className="text-gray-400 font-normal text-xs ml-1">(0%)</span></span>
               </div>
               <div className="flex justify-between items-center text-sm">
                 <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-gray-400"></div><span className="text-gray-600 font-medium">Offline</span></div>
-                <span className="text-gray-900 font-semibold">208 <span className="text-gray-400 font-normal text-xs ml-1">(33.33%)</span></span>
+                <span className="text-gray-900 font-semibold">0 <span className="text-gray-400 font-normal text-xs ml-1">(0%)</span></span>
               </div>
             </div>
           </div>

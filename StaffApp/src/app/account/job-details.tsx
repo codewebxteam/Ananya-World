@@ -1,22 +1,48 @@
 // app/job-details.tsx
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Platform } from 'react-native';
 import { ChevronLeft, Briefcase, Building2, UserCircle, MapPin, Calendar, CreditCard, Clock } from 'lucide-react-native';
 import { router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Global memory cache for Job Details to load instantly on tab switch
+let globalJobDetailsCache: any = null;
 
 export default function JobDetailsScreen() {
-  
-  // Dummy Job Data
-  const jobInfo = {
-    employeeId: "EMP-LAL-4921",
-    designation: "Senior Field Executive",
-    department: "Sample Collection",
-    workLocation: "Delhi NCR Region",
-    doj: "12 Oct 2023",
-    status: "Active - Full Time",
-    supervisor: "Rajesh Kumar (Area Manager)",
-    workType: "Field Duty"
-  };
+  const [jobInfo, setJobInfo] = useState(globalJobDetailsCache || {
+    employeeId: "N/A",
+    designation: "N/A",
+    department: "N/A",
+    workLocation: "N/A",
+    doj: "N/A",
+    status: "N/A",
+    supervisor: "N/A",
+    workType: "N/A"
+  });
+  const [isInitialLoading, setIsInitialLoading] = useState(!globalJobDetailsCache);
+
+  useEffect(() => {
+    AsyncStorage.getItem('userData').then(data => {
+      if (data) {
+        const parsed = JSON.parse(data);
+        const updated = {
+          employeeId: parsed.empId || "N/A",
+          designation: parsed.designation || "N/A",
+          department: parsed.department || "N/A",
+          workLocation: parsed.workLocation || "N/A",
+          doj: parsed.joinDate || "N/A",
+          status: parsed.status || "N/A",
+          supervisor: parsed.supervisor || "N/A",
+          workType: parsed.staffType || "N/A"
+        };
+        setJobInfo(updated);
+        globalJobDetailsCache = updated;
+        setIsInitialLoading(false);
+      } else {
+        setIsInitialLoading(false);
+      }
+    });
+  }, []);
 
   const InfoCard = ({ icon: Icon, title, value, color }: any) => (
     <View className="flex-row items-center bg-white p-4 mb-3 rounded-2xl shadow-sm border border-gray-100">
@@ -29,6 +55,24 @@ export default function JobDetailsScreen() {
       </View>
     </View>
   );
+
+  if (isInitialLoading && !globalJobDetailsCache) {
+    return (
+      <View className="flex-1 bg-[#F5F7FA]">
+        <View className="bg-white pt-12 pb-4 px-4 flex-row items-center justify-between border-b border-gray-100 shadow-sm z-10 animate-pulse">
+          <View className="w-10 h-10 bg-gray-200 rounded-full" />
+          <View className="h-6 w-28 bg-gray-200 rounded-md" />
+          <View className="w-10 h-10" />
+        </View>
+        <View className="p-4 gap-3 animate-pulse">
+          <View className="bg-[#1E3A8A]/50 rounded-[24px] h-40 w-full" />
+          <View className="bg-white rounded-2xl h-16 w-full" />
+          <View className="bg-white rounded-2xl h-16 w-full" />
+          <View className="bg-white rounded-2xl h-16 w-full" />
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View className="flex-1 bg-[#F5F7FA]">
@@ -93,12 +137,6 @@ export default function JobDetailsScreen() {
             title="Date of Joining" 
             value={jobInfo.doj} 
             color="#10B981" 
-          />
-          <InfoCard 
-            icon={UserCircle} 
-            title="Reporting Manager" 
-            value={jobInfo.supervisor} 
-            color="#EC4899" 
           />
           <InfoCard 
             icon={Clock} 

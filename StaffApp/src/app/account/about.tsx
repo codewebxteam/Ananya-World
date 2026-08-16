@@ -58,14 +58,18 @@ export default function AboutScreen() {
           </View>
         </View>
 
-        {/* About Ananya World */}
+        {/* About CodeWebX & Ananya World */}
         <View className="px-4 mb-6">
           <Text className="text-gray-500 text-sm font-bold ml-1 mb-2 uppercase tracking-wider">Developed By</Text>
-          <View className="bg-gradient-to-br from-[#1E3A8A] to-[#208AEF] bg-[#1E3A8A] rounded-3xl p-6 shadow-sm items-center">
+          <View className="bg-gradient-to-br from-[#1E3A8A] to-[#208AEF] bg-[#1E3A8A] rounded-3xl p-6 shadow-sm items-center relative overflow-hidden">
+            <View className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -mr-8 -mt-8" />
             <Globe color="white" size={32} strokeWidth={1.5} className="mb-3" />
-            <Text className="text-white text-xl font-bold tracking-widest mb-2">ANANYA WORLD</Text>
-            <Text className="text-blue-100 text-xs text-center leading-relaxed">
-              We build intelligent, robust, and scalable digital solutions. This application is proudly designed and developed by Ananya World for the staff of Dr. Lal Pathlabs.
+            <Text className="text-white text-2xl font-black tracking-widest mb-1">CodeWebX</Text>
+            <View className="bg-white/20 px-3 py-1 rounded-full mb-3">
+              <Text className="text-blue-100 text-[11px] font-bold tracking-wider">OFFICIAL DEVELOPER</Text>
+            </View>
+            <Text className="text-blue-100 text-xs text-center leading-relaxed font-medium">
+              Designed & Developed with excellence by <Text className="font-bold text-white">CodeWebX</Text> for Ananya World and Dr. Lal Pathlabs.
             </Text>
           </View>
         </View>
@@ -94,8 +98,9 @@ export default function AboutScreen() {
         
         {/* Footer */}
         <View className="items-center px-8">
-          <Text className="text-gray-400 text-[10px] text-center leading-relaxed">
-            © {new Date().getFullYear()} Ananya World. All rights reserved. {"\n"}
+          <Text className="text-gray-400 text-[11px] font-semibold text-center leading-relaxed">
+            Developed By <Text className="text-[#208AEF] font-bold">CodeWebX</Text> {"\n"}
+            © {new Date().getFullYear()} Ananya World & CodeWebX. All rights reserved. {"\n"}
             Dr. Lal Pathlabs name and logo are registered trademarks.
           </Text>
         </View>

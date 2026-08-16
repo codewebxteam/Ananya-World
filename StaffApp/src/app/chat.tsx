@@ -1,50 +1,199 @@
-// app/chat.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import {
     View, Text, ScrollView, TouchableOpacity,
-    TextInput, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Keyboard
+    TextInput, KeyboardAvoidingView, Platform, Alert, ActivityIndicator, Keyboard, Image, Modal, Linking,
+    PermissionsAndroid
 } from 'react-native';
 import {
     Users, Megaphone, ChevronRight,
     Pin, FileText, Download, PlayCircle, Plus, Smile,
-    Send, Image as ImageIcon, Camera, File, Video, Mic, MapPin
+    Send, Image as ImageIcon, Camera, File, Video as VideoIcon, Mic, MapPin, ThumbsUp,
+    Square, Play, Pause
 } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Location from 'expo-location';
+import * as WebBrowser from 'expo-web-browser';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as MediaLibrary from 'expo-media-library/legacy';
+import * as Sharing from 'expo-sharing';
+
+// Lazy-load expo-av to avoid crash if native module isn't available (Expo Go)
+let Audio: any = null;
+try {
+    Audio = require('expo-av').Audio;
+} catch (_) {
+    // expo-av not available in this runtime
+}
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc, doc, increment, deleteDoc } from 'firebase/firestore';
+import { db } from '../config/firebase';
+import { uploadToImageKitWithDetails, deleteFromImageKit } from '../utils/imagekit';
 
 const COMMON_EMOJIS = ["😀", "😂", "🥰", "😎", "🤔", "🙌", "👍", "🙏", "🔥", "💯", "🎉", "❤️"];
+
+// Module-level global memory cache to guarantee zero reload/skeleton when navigating between tabs
+let globalChatCache: {
+  isLoaded: boolean;
+  userData: any;
+  messages: any[];
+} = {
+  isLoaded: false,
+  userData: null,
+  messages: []
+};
 
 export default function ChatScreen() {
     const [showAttachments, setShowAttachments] = useState(false);
     const [showEmojis, setShowEmojis] = useState(false);
     const [messageText, setMessageText] = useState("");
     const [isFetchingLocation, setIsFetchingLocation] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
+    const [downloadingUrl, setDownloadingUrl] = useState<string | null>(null);
+
+    // Voice recording states
+    const [isRecording, setIsRecording] = useState(false);
+    const [recordingInstance, setRecordingInstance] = useState<any>(null);
+    const [recordingDuration, setRecordingDuration] = useState(0);
+    const recordingTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    // Voice playback states
+    const [playingUrl, setPlayingUrl] = useState<string | null>(null);
+    const [playbackSound, setPlaybackSound] = useState<any>(null);
+    const [playbackProgress, setPlaybackProgress] = useState(0);
+    const [playbackDuration, setPlaybackDuration] = useState(0);
+    
+    // State initialized from global memory cache for instant render with zero reload
+    const [userData, setUserData] = useState<any>(globalChatCache.userData);
+    const [messages, setMessages] = useState<any[]>(globalChatCache.messages);
+    const [selectedImage, setSelectedImage] = useState<string | null>(null);
+
+    // Skeleton / Initial loading state (false if memory cache is loaded)
+    const [isInitialLoading, setIsInitialLoading] = useState(!globalChatCache.isLoaded);
+    
     const scrollViewRef = useRef<ScrollView>(null);
 
-    useEffect(() => {
-        const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    // Keyboard visibility listener to adjust bottom padding above tab bar vs above keyboard
+    const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
 
-        const showSub = Keyboard.addListener(showEvent, () => {
-            // Auto scroll to bottom when keyboard opens
+    useEffect(() => {
+        // Clear unread message count on opening chat screen
+        AsyncStorage.setItem('lastReadChatTime', new Date().toISOString());
+
+        // Fetch User Data
+        AsyncStorage.getItem('userData').then(data => {
+            if (data) {
+              const parsed = JSON.parse(data);
+              setUserData(parsed);
+              globalChatCache.userData = parsed;
+            }
+        });
+
+        // Listen to Messages & Auto-Vanish messages older than 5 days
+        const q = query(collection(db, 'communications'), orderBy('createdAt', 'asc'));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const msgs: any[] = [];
+            const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
+            const now = Date.now();
+
+            snapshot.forEach((docSnap) => {
+                const data = docSnap.data();
+                let msgTime = 0;
+                if (data.createdAt?.toMillis) {
+                    msgTime = data.createdAt.toMillis();
+                } else if (data.createdAt?.seconds) {
+                    msgTime = data.createdAt.seconds * 1000;
+                }
+
+                // If message is older than 5 days (432,000,000 ms), auto vanish from Firestore & ImageKit
+                if (msgTime && (now - msgTime > FIVE_DAYS_MS)) {
+                    if (data.attachments && Array.isArray(data.attachments)) {
+                        data.attachments.forEach((att: any) => {
+                            if (att.fileId) {
+                                deleteFromImageKit(att.fileId);
+                            }
+                        });
+                    }
+                    deleteDoc(doc(db, 'communications', docSnap.id)).catch(console.error);
+                } else {
+                    msgs.push({ id: docSnap.id, ...data });
+                }
+            });
+            setMessages(msgs);
+            globalChatCache.messages = msgs;
+            globalChatCache.isLoaded = true;
+            setIsInitialLoading(false);
             setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
         });
 
+        const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+        const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+        const showSub = Keyboard.addListener(showEvent, () => {
+            setIsKeyboardVisible(true);
+            setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+        });
+
+        const hideSub = Keyboard.addListener(hideEvent, () => {
+            setIsKeyboardVisible(false);
+        });
+
         return () => {
+            unsubscribe();
             showSub.remove();
+            hideSub.remove();
         };
     }, []);
+
+    const sendMessage = async (text: string = "", attachments: any[] = []) => {
+        if ((!text.trim() && attachments.length === 0) || !userData) return;
+        
+        const msgText = text;
+        setMessageText(""); // Clear immediately for UX
+        setShowAttachments(false);
+        setShowEmojis(false);
+        
+        try {
+            await addDoc(collection(db, 'communications'), {
+                type: 'normal',
+                text: msgText,
+                author: userData.name,
+                authorId: userData.empId,
+                avatar: userData.avatar || null,
+                attachments: attachments,
+                likes: 0,
+                createdAt: serverTimestamp(),
+                pinned: false
+            });
+            setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+        } catch (error: any) {
+            Alert.alert("Error", error.message);
+        }
+    };
+
+    const handleSendText = () => sendMessage(messageText);
+
+    const handleFileUpload = async (uri: string, name: string, type: string) => {
+        setIsUploading(true);
+        setShowAttachments(false);
+        const result = await uploadToImageKitWithDetails(uri, name);
+        if (result && result.url) {
+            await sendMessage("", [{ url: result.url, fileId: result.fileId, fileType: type, name }]);
+        } else {
+            Alert.alert("Upload Failed", "Could not upload file. Please try again.");
+        }
+        setIsUploading(false);
+    };
 
     // Attachment Handlers
     const handlePickPhoto = async () => {
         let result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
             allowsEditing: true,
-            quality: 1,
+            quality: 0.8,
         });
-        if (!result.canceled) {
-            Alert.alert("Photo Selected", `URI: ${result.assets[0].uri.substring(0, 50)}...`);
-            setShowAttachments(false);
+        if (!result.canceled && result.assets && result.assets[0]) {
+            handleFileUpload(result.assets[0].uri, `photo_${Date.now()}.jpg`, 'image');
         }
     };
 
@@ -57,11 +206,10 @@ export default function ChatScreen() {
         let result = await ImagePicker.launchCameraAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
             allowsEditing: true,
-            quality: 1,
+            quality: 0.8,
         });
-        if (!result.canceled) {
-            Alert.alert("Photo Captured", `URI: ${result.assets[0].uri.substring(0, 50)}...`);
-            setShowAttachments(false);
+        if (!result.canceled && result.assets && result.assets[0]) {
+            handleFileUpload(result.assets[0].uri, `camera_${Date.now()}.jpg`, 'image');
         }
     };
 
@@ -71,56 +219,546 @@ export default function ChatScreen() {
             copyToCacheDirectory: true
         });
         if (result.canceled === false && result.assets && result.assets.length > 0) {
-            Alert.alert("Document Selected", `File: ${result.assets[0].name}`);
-            setShowAttachments(false);
+            handleFileUpload(result.assets[0].uri, result.assets[0].name || `doc_${Date.now()}`, 'document');
         }
     };
 
     const handleVideo = async () => {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert("Permission needed", "Media library access is required to pick videos.");
+            return;
+        }
         let result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.Videos,
-            allowsEditing: true,
+            allowsEditing: false, // Disabling editing allows reliable video picking on iOS & Android
             quality: 1,
         });
-        if (!result.canceled) {
-            Alert.alert("Video Selected", `URI: ${result.assets[0].uri.substring(0, 50)}...`);
-            setShowAttachments(false);
+        if (!result.canceled && result.assets && result.assets[0]) {
+            const asset = result.assets[0];
+            handleFileUpload(asset.uri, asset.fileName || `video_${Date.now()}.mp4`, 'video');
         }
     };
 
-    const handleAudio = () => {
-        Alert.alert("Audio Recording", "Native audio recorder would open here.");
-        setShowAttachments(false);
-    };
-
-    const handleLocation = async () => {
-        setIsFetchingLocation(true);
+    const handleLike = async (msgId: string) => {
         try {
-            let { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== 'granted') {
-                Alert.alert('Permission Denied', 'Permission to access location was denied');
-                setIsFetchingLocation(false);
-                return;
-            }
-            let location = await Location.getCurrentPositionAsync({});
-            Alert.alert("Location Shared", `Lat: ${location.coords.latitude}\nLon: ${location.coords.longitude}`);
-            setShowAttachments(false);
+            await updateDoc(doc(db, 'communications', msgId), {
+                likes: increment(1)
+            });
         } catch (error) {
-            Alert.alert("Error", "Could not fetch location.");
-        } finally {
-            setIsFetchingLocation(false);
+            console.log(error);
         }
     };
 
-    const onEmojiSelect = (emoji: string) => {
-        setMessageText(prev => prev + emoji);
+    // Voice Recording
+    const handleVoiceRecord = async () => {
+        if (!Audio) {
+            Alert.alert('Not Available', 'Voice recording requires a development build. It is not supported in Expo Go.');
+            return;
+        }
+        if (isRecording && recordingInstance) {
+            // Stop recording
+            try {
+                if (recordingTimer.current) {
+                    clearInterval(recordingTimer.current);
+                    recordingTimer.current = null;
+                }
+                await recordingInstance.stopAndUnloadAsync();
+                await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+                const uri = recordingInstance.getURI();
+                setIsRecording(false);
+                setRecordingInstance(null);
+                const duration = recordingDuration;
+                setRecordingDuration(0);
+
+                if (uri && duration >= 1) {
+                    setIsUploading(true);
+                    const voiceName = `voice_${Date.now()}.m4a`;
+                    const result = await uploadToImageKitWithDetails(uri, voiceName);
+                    if (result && result.url) {
+                        await sendMessage("", [{ url: result.url, fileId: result.fileId, fileType: 'voice', name: voiceName, duration }]);
+                    } else {
+                        Alert.alert("Upload Failed", "Could not upload voice message.");
+                    }
+                    setIsUploading(false);
+                } else if (duration < 1) {
+                    Alert.alert("Too Short", "Hold the mic button longer to record.");
+                }
+            } catch (err) {
+                console.error("Stop recording error:", err);
+                setIsRecording(false);
+                setRecordingInstance(null);
+                setRecordingDuration(0);
+                if (recordingTimer.current) clearInterval(recordingTimer.current);
+            }
+        } else {
+            // Start recording
+            try {
+                const { status } = await Audio.requestPermissionsAsync();
+                if (status !== 'granted') {
+                    Alert.alert("Permission Required", "Microphone permission is needed to record voice messages.");
+                    return;
+                }
+                await Audio.setAudioModeAsync({
+                    allowsRecordingIOS: true,
+                    playsInSilentModeIOS: true,
+                });
+                const { recording } = await Audio.Recording.createAsync(
+                    Audio.RecordingOptionsPresets.HIGH_QUALITY
+                );
+                setRecordingInstance(recording);
+                setIsRecording(true);
+                setRecordingDuration(0);
+                setShowAttachments(false);
+                setShowEmojis(false);
+
+                recordingTimer.current = setInterval(() => {
+                    setRecordingDuration(prev => prev + 1);
+                }, 1000);
+            } catch (err) {
+                console.error("Start recording error:", err);
+                Alert.alert("Error", "Could not start recording. Please try again.");
+            }
+        }
+    };
+
+    const cancelRecording = async () => {
+        if (recordingInstance) {
+            try {
+                if (recordingTimer.current) {
+                    clearInterval(recordingTimer.current);
+                    recordingTimer.current = null;
+                }
+                await recordingInstance.stopAndUnloadAsync();
+                await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+            } catch (_) {}
+            setIsRecording(false);
+            setRecordingInstance(null);
+            setRecordingDuration(0);
+        }
+    };
+
+    // Voice Playback
+    const handlePlayVoice = async (url: string) => {
+        if (!Audio) {
+            Alert.alert('Not Available', 'Audio playback requires a development build. It is not supported in Expo Go.');
+            return;
+        }
+        try {
+            // If already playing this URL, toggle pause/play
+            if (playingUrl === url && playbackSound) {
+                const status = await playbackSound.getStatusAsync();
+                if (status.isLoaded && status.isPlaying) {
+                    await playbackSound.pauseAsync();
+                    return;
+                } else if (status.isLoaded) {
+                    await playbackSound.playAsync();
+                    return;
+                }
+            }
+
+            // Stop any currently playing sound
+            if (playbackSound) {
+                await playbackSound.unloadAsync();
+                setPlaybackSound(null);
+                setPlayingUrl(null);
+                setPlaybackProgress(0);
+            }
+
+            await Audio.setAudioModeAsync({
+                allowsRecordingIOS: false,
+                playsInSilentModeIOS: true,
+            });
+
+            const { sound } = await Audio.Sound.createAsync(
+                { uri: url },
+                { shouldPlay: true },
+                (status: any) => {
+                    if (status.isLoaded) {
+                        setPlaybackProgress(status.positionMillis || 0);
+                        setPlaybackDuration(status.durationMillis || 0);
+                        if (status.didJustFinish) {
+                            setPlayingUrl(null);
+                            setPlaybackProgress(0);
+                            sound.unloadAsync();
+                            setPlaybackSound(null);
+                        }
+                    }
+                }
+            );
+            setPlaybackSound(sound);
+            setPlayingUrl(url);
+        } catch (err) {
+            console.error("Playback error:", err);
+            Alert.alert("Playback Error", "Could not play voice message.");
+        }
+    };
+
+    const formatDuration = (seconds: number) => {
+        const m = Math.floor(seconds / 60);
+        const s = seconds % 60;
+        return `${m}:${s.toString().padStart(2, '0')}`;
+    };
+
+    const openMediaLink = (url: string) => {
+        if (!url) return;
+        WebBrowser.openBrowserAsync(url).catch(() => {
+            Linking.openURL(url).catch(console.error);
+        });
+    };
+
+    const handleDownloadFile = async (url: string, fileName?: string) => {
+        if (!url) return;
+        try {
+            setDownloadingUrl(url);
+
+            const urlClean = url.split('?')[0];
+            const fileExt = urlClean.split('.').pop() || 'file';
+            const cleanName = fileName ? (fileName.includes('.') ? fileName : `${fileName}.${fileExt}`) : `file_${Date.now()}.${fileExt}`;
+            const localUri = `${FileSystem.cacheDirectory}${cleanName}`;
+
+            const downloadRes = await FileSystem.downloadAsync(url, localUri);
+            const isMedia = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'm4v'].includes(fileExt.toLowerCase());
+
+            if (isMedia) {
+                // For media files, save directly to gallery
+                if (Platform.OS === 'android') {
+                    // On Android 10+, MediaLibrary handles scoped storage automatically
+                    // On Android <10, we need WRITE_EXTERNAL_STORAGE
+                    const androidVersion = Platform.Version;
+                    if (typeof androidVersion === 'number' && androidVersion < 29) {
+                        const granted = await PermissionsAndroid.request(
+                            PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
+                            {
+                                title: 'Storage Permission',
+                                message: 'App needs storage permission to save files to your phone.',
+                                buttonPositive: 'Allow',
+                                buttonNegative: 'Cancel',
+                            }
+                        );
+                        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+                            Alert.alert('Permission Denied', 'Storage permission is required to save files.');
+                            setDownloadingUrl(null);
+                            return;
+                        }
+                    }
+                }
+
+                try {
+                    await MediaLibrary.saveToLibraryAsync(downloadRes.uri);
+                    Alert.alert('Saved! 📥', 'File saved to your Gallery / Photos.');
+                } catch (mediaErr) {
+                    // Fallback: try createAssetAsync
+                    try {
+                        await MediaLibrary.createAssetAsync(downloadRes.uri);
+                        Alert.alert('Saved! 📥', 'File saved to your Gallery / Photos.');
+                    } catch (_) {
+                        // Final fallback: use sharing
+                        if (await Sharing.isAvailableAsync()) {
+                            await Sharing.shareAsync(downloadRes.uri);
+                        } else {
+                            Alert.alert('Downloaded ✅', 'File downloaded to app cache.');
+                        }
+                    }
+                }
+            } else {
+                // For documents on Android, save to Downloads using SAF
+                if (Platform.OS === 'android') {
+                    try {
+                        const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+                        if (permissions.granted) {
+                            const mimeType = cleanName.endsWith('.pdf') ? 'application/pdf' 
+                                : cleanName.endsWith('.doc') || cleanName.endsWith('.docx') ? 'application/msword'
+                                : 'application/octet-stream';
+                            const fileNameNoExt = cleanName.replace(/\.[^.]+$/, '');
+                            const createdUri = await FileSystem.StorageAccessFramework.createFileAsync(
+                                permissions.directoryUri,
+                                fileNameNoExt,
+                                mimeType
+                            );
+                            const fileContent = await FileSystem.readAsStringAsync(downloadRes.uri, {
+                                encoding: FileSystem.EncodingType.Base64,
+                            });
+                            await FileSystem.StorageAccessFramework.writeAsStringAsync(createdUri, fileContent, {
+                                encoding: FileSystem.EncodingType.Base64,
+                            });
+                            Alert.alert('Saved! 📥', 'Document saved to the selected folder.');
+                        } else {
+                            // User denied folder selection, fall back to share
+                            if (await Sharing.isAvailableAsync()) {
+                                await Sharing.shareAsync(downloadRes.uri);
+                            }
+                        }
+                    } catch (safErr) {
+                        // SAF failed, fallback to sharing
+                        if (await Sharing.isAvailableAsync()) {
+                            await Sharing.shareAsync(downloadRes.uri);
+                        }
+                    }
+                } else {
+                    // iOS - use share sheet for documents
+                    if (await Sharing.isAvailableAsync()) {
+                        await Sharing.shareAsync(downloadRes.uri);
+                    } else {
+                        Alert.alert('Downloaded ✅', 'File downloaded.');
+                    }
+                }
+            }
+        } catch (error: any) {
+            console.error('Download Error:', error);
+            openMediaLink(url);
+        } finally {
+            setDownloadingUrl(null);
+        }
+    };
+
+    const renderAvatar = (avatarUrl?: string, authorName?: string) => {
+        const displayName = (authorName || 'User').trim();
+        const firstWord = displayName.split(' ')[0] || displayName;
+        const initial = firstWord.charAt(0).toUpperCase() || 'U';
+
+        return (
+            <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                {/* Always show initial as base layer */}
+                <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 16 }}>
+                    {initial}
+                </Text>
+                {/* Overlay the image on top if URL exists — if it fails to load, initial shows through */}
+                {avatarUrl ? (
+                    <Image 
+                        source={{ uri: avatarUrl }} 
+                        style={{ width: 36, height: 36, borderRadius: 18, position: 'absolute', top: 0, left: 0 }} 
+                    />
+                ) : null}
+            </View>
+        );
+    };
+
+    // Skeleton Loader Component
+    if (isInitialLoading) {
+        return (
+            <View className="flex-1 px-4 pt-4 gap-4 animate-pulse">
+                <View className="bg-gray-200 rounded-2xl h-16 w-3/4 self-start" />
+                <View className="bg-gray-200 rounded-2xl h-20 w-3/4 self-end" />
+                <View className="bg-gray-200 rounded-2xl h-16 w-2/3 self-start" />
+                <View className="bg-gray-200 rounded-2xl h-24 w-4/5 self-end" />
+            </View>
+        );
+    }
+
+    const renderMessage = (msg: any) => {
+        const isMe = userData && msg.authorId === userData.empId;
+        const time = msg.createdAt ? new Date(msg.createdAt.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+        if (msg.type !== 'normal') {
+            // Admin Announcements/Notices
+            const isNotice = msg.type === 'notice' || msg.type === 'holiday';
+            return (
+                <View key={msg.id} className={`mb-4 p-4 rounded-xl border ${isNotice ? 'bg-[#FFFBEB] border-[#FDE68A]' : 'bg-[#FDF4FF] border-[#F5D0FE]'} shadow-sm`}>
+                    <View className="flex-row items-center gap-2 mb-2">
+                        <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: isNotice ? '#D97706' : '#9333EA', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                            <Megaphone size={14} color="#FFFFFF" />
+                            {msg.avatar ? (
+                                <Image source={{ uri: msg.avatar }} style={{ width: 28, height: 28, borderRadius: 14, position: 'absolute', top: 0, left: 0 }} />
+                            ) : null}
+                        </View>
+                        <Text className={`font-bold text-[13px] uppercase ${isNotice ? 'text-[#D97706]' : 'text-[#9333EA]'}`}>
+                            {msg.title || msg.type}
+                        </Text>
+                    </View>
+                    <Text className="text-gray-800 text-[15px] mb-2">{msg.text}</Text>
+                    
+                    {msg.attachments?.map((att: any, i: number) => (
+                        <View key={i} className="mt-2 mb-2">
+                            {att.fileType === 'image' && (
+                                <TouchableOpacity onPress={() => setSelectedImage(att.url)}>
+                                    <Image source={{ uri: att.url }} style={{ width: '100%', height: 150, borderRadius: 8 }} resizeMode="cover" />
+                                </TouchableOpacity>
+                            )}
+                            {att.fileType === 'video' && (
+                                <TouchableOpacity 
+                                    onPress={() => openMediaLink(att.url)}
+                                    className="flex-row items-center gap-3 bg-[#0F172A] p-3.5 rounded-2xl border border-slate-700 w-full"
+                                >
+                                    <View className="w-10 h-10 rounded-full bg-blue-600/30 items-center justify-center border border-blue-500/40">
+                                        <PlayCircle size={22} color="#60A5FA" />
+                                    </View>
+                                    <View className="flex-1">
+                                        <Text className="text-xs font-bold text-white" numberOfLines={1}>{att.name || "Notice Video"}</Text>
+                                        <Text className="text-[10px] text-blue-300 font-medium">Tap to Play Video 🎬</Text>
+                                    </View>
+                                </TouchableOpacity>
+                            )}
+                            {att.fileType === 'document' && (
+                                <TouchableOpacity 
+                                    onPress={() => openMediaLink(att.url)}
+                                    className="flex-row items-center gap-2 bg-white/60 p-3 rounded-xl border border-amber-200"
+                                >
+                                    <FileText size={18} color="#D97706" />
+                                    <Text className="text-xs text-gray-800 font-bold flex-1" numberOfLines={1}>{att.name || "Attachment Document"}</Text>
+                                    <Download size={16} color="#4B5563" />
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    ))}
+
+                    <View className="flex-row justify-between items-center mt-1">
+                        <Text className="text-gray-500 text-xs font-medium">By {msg.author} • {time}</Text>
+                    </View>
+                </View>
+            );
+        }
+
+        return (
+            <View key={msg.id} className={`flex-row gap-2 mb-4 items-end ${isMe ? 'justify-end' : 'justify-start'}`}>
+                {!isMe && renderAvatar(msg.avatar, msg.author)}
+                
+                <View className={`flex-1 ${isMe ? 'items-end' : 'items-start'}`}>
+                    {!isMe && <Text className="font-bold text-gray-900 text-xs mb-1 ml-1">{msg.author || 'Staff'}</Text>}
+                    
+                    <View className={`${isMe ? 'bg-[#2563EB]' : 'bg-white border border-gray-200'} px-4 py-2.5 rounded-2xl ${isMe ? 'rounded-tr-xs' : 'rounded-tl-xs'} max-w-[85%]`}>
+                        {msg.text ? (
+                            <Text className={`${isMe ? 'text-white' : 'text-gray-800'} text-[15px] leading-relaxed`}>{msg.text}</Text>
+                        ) : null}
+                        
+                        {msg.attachments?.map((att: any, i: number) => (
+                            <View key={i} className="mt-1 mb-1">
+                                {att.fileType === 'image' && (
+                                    <View className="relative my-1">
+                                        <TouchableOpacity onPress={() => setSelectedImage(att.url)}>
+                                            <Image source={{ uri: att.url }} style={{ width: 200, height: 150, borderRadius: 10 }} resizeMode="cover" />
+                                        </TouchableOpacity>
+                                        <TouchableOpacity 
+                                            onPress={() => handleDownloadFile(att.url, att.name || 'photo.jpg')}
+                                            className="absolute top-2 right-2 bg-black/70 px-2.5 py-1 rounded-full flex-row items-center gap-1"
+                                            activeOpacity={0.8}
+                                        >
+                                            {downloadingUrl === att.url ? (
+                                                <ActivityIndicator size="small" color="#FFFFFF" />
+                                            ) : (
+                                                <>
+                                                    <Download size={12} color="#FFFFFF" />
+                                                    <Text className="text-white text-[10px] font-semibold">Save</Text>
+                                                </>
+                                            )}
+                                        </TouchableOpacity>
+                                    </View>
+                                )}
+                                {att.fileType === 'video' && (
+                                    <View className="flex-row items-center gap-2 bg-[#0F172A] p-3 rounded-2xl border border-slate-700 w-56 my-1">
+                                        <TouchableOpacity 
+                                            onPress={() => openMediaLink(att.url)}
+                                            className="flex-row items-center gap-2.5 flex-1"
+                                        >
+                                            <View className="w-9 h-9 rounded-full bg-blue-600/30 items-center justify-center border border-blue-500/40">
+                                                <PlayCircle size={20} color="#60A5FA" />
+                                            </View>
+                                            <View className="flex-1">
+                                                <Text className="text-xs font-bold text-white" numberOfLines={1}>{att.name || "Video Attachment"}</Text>
+                                                <Text className="text-[10px] text-blue-300 font-medium">Tap to Play 🎬</Text>
+                                            </View>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity 
+                                            onPress={() => handleDownloadFile(att.url, att.name || 'video.mp4')}
+                                            className="w-8 h-8 rounded-full bg-slate-800 items-center justify-center border border-slate-600"
+                                            activeOpacity={0.8}
+                                        >
+                                            {downloadingUrl === att.url ? (
+                                                <ActivityIndicator size="small" color="#60A5FA" />
+                                            ) : (
+                                                <Download size={14} color="#60A5FA" />
+                                            )}
+                                        </TouchableOpacity>
+                                    </View>
+                                )}
+                                {att.fileType === 'document' && (
+                                    <View className="flex-row items-center gap-2 bg-gray-50 p-2.5 rounded-xl border border-gray-200 w-56 my-1">
+                                        <TouchableOpacity 
+                                            onPress={() => openMediaLink(att.url)}
+                                            className="flex-row items-center gap-2 flex-1"
+                                        >
+                                            <FileText size={18} color="#2563EB" />
+                                            <View className="flex-1">
+                                                <Text className="text-xs text-gray-800 font-semibold" numberOfLines={1}>{att.name || "Document"}</Text>
+                                                <Text className="text-[10px] text-gray-500 font-medium">PDF / File</Text>
+                                            </View>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity 
+                                            onPress={() => handleDownloadFile(att.url, att.name || 'document.pdf')}
+                                            className="w-8 h-8 rounded-full bg-blue-50 items-center justify-center border border-blue-100"
+                                            activeOpacity={0.8}
+                                        >
+                                            {downloadingUrl === att.url ? (
+                                                <ActivityIndicator size="small" color="#2563EB" />
+                                            ) : (
+                                                <Download size={14} color="#2563EB" />
+                                            )}
+                                        </TouchableOpacity>
+                                    </View>
+                                )}
+                            </View>
+                        ))}
+                        {msg.attachments?.filter((att: any) => att.fileType === 'voice').map((att: any, i: number) => (
+                            <TouchableOpacity
+                                key={`voice-${i}`}
+                                onPress={() => handlePlayVoice(att.url)}
+                                style={{
+                                    flexDirection: 'row', alignItems: 'center', gap: 10,
+                                    backgroundColor: isMe ? 'rgba(255,255,255,0.15)' : '#F0F4FF',
+                                    paddingHorizontal: 12, paddingVertical: 10, borderRadius: 16,
+                                    marginTop: 4, minWidth: 160,
+                                }}
+                            >
+                                <View style={{
+                                    width: 32, height: 32, borderRadius: 16,
+                                    backgroundColor: isMe ? 'rgba(255,255,255,0.25)' : '#2563EB',
+                                    alignItems: 'center', justifyContent: 'center'
+                                }}>
+                                    {playingUrl === att.url ? (
+                                        <Pause size={14} color={isMe ? '#2563EB' : '#FFFFFF'} />
+                                    ) : (
+                                        <Play size={14} color={isMe ? '#2563EB' : '#FFFFFF'} style={{ marginLeft: 2 }} />
+                                    )}
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <View style={{
+                                        height: 4, backgroundColor: isMe ? 'rgba(255,255,255,0.3)' : '#D1D5DB',
+                                        borderRadius: 2, overflow: 'hidden'
+                                    }}>
+                                        <View style={{
+                                            height: 4, borderRadius: 2,
+                                            backgroundColor: isMe ? '#FFFFFF' : '#2563EB',
+                                            width: playingUrl === att.url && playbackDuration > 0
+                                                ? `${Math.min((playbackProgress / playbackDuration) * 100, 100)}%`
+                                                : '0%'
+                                        }} />
+                                    </View>
+                                    <Text style={{
+                                        fontSize: 10, marginTop: 3, fontWeight: '600',
+                                        color: isMe ? 'rgba(255,255,255,0.7)' : '#6B7280'
+                                    }}>
+                                        🎙 {att.duration ? formatDuration(att.duration) : '0:00'}
+                                    </Text>
+                                </View>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                    
+                    <View className="flex-row items-center gap-2 mt-1">
+                        <Text className="text-gray-400 text-[10px]">{time}</Text>
+                    </View>
+                </View>
+
+                {isMe && renderAvatar(userData?.avatar || msg.avatar, userData?.name || msg.author)}
+            </View>
+        );
     };
 
     return (
         <KeyboardAvoidingView
             style={{ flex: 1 }}
-            behavior="padding"
-            keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 125}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 180 : 155}
         >
             {/* Chat Body */}
             <ScrollView
@@ -129,179 +767,44 @@ export default function ChatScreen() {
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={{ paddingBottom: 20 }}
                 keyboardShouldPersistTaps="handled"
+                onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
             >
-                {/* Announcement Banner */}
-                <View className="bg-white border border-[#FFEDD5] rounded-xl p-3 flex-row items-center gap-3 mb-6 shadow-sm">
-                    <View className="bg-[#FFF7ED] p-2 rounded-lg">
-                        <Megaphone color="#F97316" size={20} strokeWidth={2} />
+                {messages.length === 0 ? (
+                    <View className="flex-1 items-center justify-center mt-20">
+                        <Text className="text-gray-400 font-medium text-sm">No communications yet.</Text>
                     </View>
-                    <View className="flex-1">
-                        <Text className="text-[#1E3A8A] text-[13px] font-bold mb-0.5">Announcements by Admin</Text>
-                        <Text className="text-gray-600 text-[11px]">Kindly check the new field duty guidelines.</Text>
-                    </View>
-                    <TouchableOpacity className="flex-row items-center">
-                        <Text className="text-[#208AEF] text-xs font-bold mr-0.5">View All</Text>
-                        <ChevronRight color="#208AEF" size={16} strokeWidth={2.5} />
-                    </TouchableOpacity>
-                </View>
-
-                {/* Date Separator */}
-                <View className="items-center mb-6">
-                    <View className="bg-white border border-gray-100 px-4 py-1.5 rounded-full shadow-sm">
-                        <Text className="text-gray-500 text-[10px] font-medium">Monday, 5 Aug 2025</Text>
-                    </View>
-                </View>
-
-                {/* Message 1 (Admin) */}
-                <View className="pl-12 mb-5 relative">
-                    <View className="absolute left-0 top-0 w-9 h-9 bg-[#FEF3C7] rounded-full items-center justify-center">
-                        <Text className="text-[#D97706] font-bold text-sm">A</Text>
-                    </View>
-                    <View className="bg-white rounded-2xl rounded-tl-sm p-3 shadow-sm border border-gray-100 relative">
-                        <View className="flex-row justify-between items-center mb-1.5">
-                            <View className="flex-row items-center gap-1.5">
-                                <Text className="text-[#1E3A8A] font-bold text-xs">Admin</Text>
-                                <View className="bg-[#EFF6FF] px-1.5 py-0.5 rounded">
-                                    <Text className="text-[#208AEF] text-[9px] font-bold">Admin</Text>
-                                </View>
-                            </View>
-                            <Pin color="#3B82F6" size={14} strokeWidth={2.5} />
-                        </View>
-                        <Text className="text-gray-800 text-[13px] leading-5 mb-1">
-                            Good morning everyone! 👋{"\n"}Please ensure to mark your attendance on time and follow all the safety protocols.
-                        </Text>
-                        <Text className="text-gray-400 text-[9px] font-medium">09:00 AM</Text>
-
-                        {/* Reactions */}
-                        <View className="absolute -bottom-3 left-2 flex-row gap-1">
-                            <View className="bg-white border border-gray-100 rounded-full px-1.5 py-0.5 flex-row items-center gap-1 shadow-sm">
-                                <Text className="text-[10px]">👍</Text>
-                                <Text className="text-gray-500 text-[10px] font-bold">12</Text>
-                            </View>
-                            <View className="bg-white border border-gray-100 rounded-full px-1.5 py-0.5 flex-row items-center gap-1 shadow-sm">
-                                <Text className="text-[10px]">❤️</Text>
-                                <Text className="text-gray-500 text-[10px] font-bold">5</Text>
-                            </View>
-                        </View>
-                    </View>
-                </View>
-
-                {/* Message 2 (Ravi) */}
-                <View className="pl-12 mb-5 relative mt-2">
-                    <View className="absolute left-0 top-0 w-9 h-9 bg-[#DCFCE7] rounded-full items-center justify-center">
-                        <Text className="text-[#15803D] font-bold text-sm">RK</Text>
-                    </View>
-                    <View className="bg-white rounded-2xl rounded-tl-sm p-3 shadow-sm border border-gray-100 relative">
-                        <Text className="text-[#15803D] font-bold text-xs mb-1.5">Ravi Kumar</Text>
-                        <Text className="text-gray-800 text-[13px] leading-5 mb-1">Good morning team!</Text>
-                        <Text className="text-gray-400 text-[9px] font-medium">09:05 AM</Text>
-
-                        <View className="absolute -bottom-3 left-2 flex-row gap-1">
-                            <View className="bg-white border border-gray-100 rounded-full px-1.5 py-0.5 flex-row items-center gap-1 shadow-sm">
-                                <Text className="text-[10px]">👍</Text>
-                                <Text className="text-gray-500 text-[10px] font-bold">3</Text>
-                            </View>
-                        </View>
-                    </View>
-                </View>
-
-                {/* Message 3 (Neha - Document) */}
-                <View className="pl-12 mb-5 relative mt-2">
-                    <View className="absolute left-0 top-0 w-9 h-9 bg-[#F3E8FF] rounded-full items-center justify-center">
-                        <Text className="text-[#7E22CE] font-bold text-sm">NS</Text>
-                    </View>
-                    <View className="bg-white rounded-2xl rounded-tl-sm p-3 shadow-sm border border-gray-100 relative">
-                        <Text className="text-[#7E22CE] font-bold text-xs mb-1.5">Neha Sharma</Text>
-                        <Text className="text-gray-800 text-[13px] leading-5 mb-2">Sample collection completed at Sector 62. Sharing the report.</Text>
-                        <Text className="text-gray-400 text-[9px] font-medium mb-3">09:15 AM</Text>
-
-                        {/* Document Attachment */}
-                        <View className="bg-[#F8FAFC] border border-gray-100 rounded-xl p-3 flex-row items-center gap-3">
-                            <View className="bg-[#FEE2E2] p-2 rounded-lg">
-                                <FileText color="#EF4444" size={20} strokeWidth={2} />
-                            </View>
-                            <View className="flex-1">
-                                <Text className="text-gray-800 text-xs font-bold" numberOfLines={1}>Sample_Report_05Aug2025.pdf</Text>
-                                <Text className="text-gray-500 text-[10px] mt-0.5">1.2 MB</Text>
-                            </View>
-                            <TouchableOpacity className="bg-white p-1.5 rounded-full border border-gray-200">
-                                <Download color="#6B7280" size={16} strokeWidth={2} />
-                            </TouchableOpacity>
-                        </View>
-
-                        <View className="absolute -bottom-3 left-2 flex-row gap-1 mt-3">
-                            <View className="bg-white border border-gray-100 rounded-full px-1.5 py-0.5 flex-row items-center gap-1 shadow-sm">
-                                <Text className="text-[10px]">👍</Text>
-                                <Text className="text-gray-500 text-[10px] font-bold">4</Text>
-                            </View>
-                        </View>
-                    </View>
-                </View>
-
-                {/* Message 4 (Amit) */}
-                <View className="pl-12 mb-5 relative mt-2">
-                    <View className="absolute left-0 top-0 w-9 h-9 bg-[#EFF6FF] rounded-full items-center justify-center">
-                        <Text className="text-[#1D4ED8] font-bold text-sm">A</Text>
-                    </View>
-                    <View className="bg-white rounded-2xl rounded-tl-sm p-3 shadow-sm border border-gray-100 relative">
-                        <Text className="text-[#1D4ED8] font-bold text-xs mb-1.5">Amit Kumar</Text>
-                        <Text className="text-gray-800 text-[13px] leading-5 mb-1">Team, lunch break is from 1:00 PM to 1:30 PM. Please plan accordingly.</Text>
-                        <Text className="text-gray-400 text-[9px] font-medium">10:30 AM</Text>
-
-                        <View className="absolute -bottom-3 left-2 flex-row gap-1">
-                            <View className="bg-white border border-gray-100 rounded-full px-1.5 py-0.5 flex-row items-center gap-1 shadow-sm">
-                                <Text className="text-[10px]">👍</Text>
-                                <Text className="text-gray-500 text-[10px] font-bold">6</Text>
-                            </View>
-                        </View>
-                    </View>
-                </View>
-
-                {/* Message 5 (Vikram - Video) */}
-                <View className="pl-12 mb-8 relative mt-2">
-                    <View className="absolute left-0 top-0 w-9 h-9 bg-[#FFEDD5] rounded-full items-center justify-center">
-                        <Text className="text-[#C2410C] font-bold text-sm">VS</Text>
-                    </View>
-                    <View className="bg-white rounded-2xl rounded-tl-sm p-3 shadow-sm border border-gray-100 relative">
-                        <Text className="text-[#C2410C] font-bold text-xs mb-1.5">Vikram Singh</Text>
-                        <Text className="text-gray-800 text-[13px] leading-5 mb-2">Equipment maintenance completed. (Video attached)</Text>
-                        <Text className="text-gray-400 text-[9px] font-medium mb-3">11:20 AM</Text>
-
-                        {/* Video Attachment */}
-                        <View className="bg-[#F8FAFC] border border-gray-100 rounded-xl p-3 flex-row items-center gap-3">
-                            <View className="w-12 h-10 bg-gray-300 rounded-lg items-center justify-center relative overflow-hidden">
-                                <PlayCircle color="white" size={24} className="z-10" />
-                                <View className="absolute inset-0 bg-black/20" />
-                            </View>
-                            <View className="flex-1">
-                                <Text className="text-gray-800 text-xs font-bold" numberOfLines={1}>Maintenance_Video.mp4</Text>
-                                <Text className="text-gray-500 text-[10px] mt-0.5">12.4 MB</Text>
-                            </View>
-                            <TouchableOpacity className="bg-white p-1.5 rounded-full border border-gray-200">
-                                <Download color="#6B7280" size={16} strokeWidth={2} />
-                            </TouchableOpacity>
-                        </View>
-
-                        <View className="absolute -bottom-3 left-2 flex-row gap-1 mt-3">
-                            <View className="bg-white border border-gray-100 rounded-full px-1.5 py-0.5 flex-row items-center gap-1 shadow-sm">
-                                <Text className="text-[10px]">👍</Text>
-                                <Text className="text-gray-500 text-[10px] font-bold">5</Text>
-                            </View>
-                        </View>
-                    </View>
-                </View>
+                ) : (
+                    messages.map(renderMessage)
+                )}
             </ScrollView>
 
-            {/* Bottom Input Area */}
-            <View className="bg-[#F8FAFC] border-t border-gray-200 pt-2 pb-24 px-3">
+            {isUploading && (
+                <View className="bg-blue-50 py-2 items-center border-t border-blue-100">
+                    <Text className="text-blue-600 text-xs font-medium">Uploading attachment...</Text>
+                </View>
+            )}
 
+            {/* Bottom Input Area */}
+            <View className={`bg-[#F8FAFC] border-t border-gray-200 pt-2 px-3 ${isKeyboardVisible ? 'pb-16' : 'pb-[95px]'}`}>
+                {/* Recording Indicator */}
+                {isRecording && (
+                    <View className="flex-row items-center justify-between mb-2 bg-red-50 rounded-2xl px-4 py-3 border border-red-200">
+                        <View className="flex-row items-center gap-2">
+                            <View className="w-3 h-3 rounded-full bg-red-500" />
+                            <Text className="text-red-600 font-bold text-sm">Recording... {formatDuration(recordingDuration)}</Text>
+                        </View>
+                        <TouchableOpacity onPress={cancelRecording} className="bg-red-100 px-3 py-1.5 rounded-full">
+                            <Text className="text-red-600 text-xs font-bold">Cancel</Text>
+                        </TouchableOpacity>
+                    </View>
+                )}
                 {/* Simple Emoji Picker */}
                 {showEmojis && (
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2 bg-white rounded-full py-2 px-3 border border-gray-100 shadow-sm max-h-12">
                         {COMMON_EMOJIS.map((emoji, index) => (
                             <TouchableOpacity
                                 key={index}
-                                onPress={() => onEmojiSelect(emoji)}
+                                onPress={() => setMessageText(prev => prev + emoji)}
                                 className="px-2 items-center justify-center"
                             >
                                 <Text className="text-2xl">{emoji}</Text>
@@ -311,7 +814,7 @@ export default function ChatScreen() {
                 )}
 
                 {/* Main Input Row */}
-                <View className="flex-row items-end gap-2 mb-2">
+                <View className="flex-row items-end gap-2 mb-1">
                     <TouchableOpacity
                         onPress={() => {
                             setShowAttachments(!showAttachments);
@@ -319,7 +822,7 @@ export default function ChatScreen() {
                         }}
                         className="w-10 h-10 bg-white border border-[#E0E7FF] rounded-full items-center justify-center mb-0.5"
                     >
-                        <Plus color="#208AEF" size={24} strokeWidth={2.5} />
+                        <Plus color="#2563EB" size={24} strokeWidth={2.5} />
                     </TouchableOpacity>
 
                     <View className="flex-1 bg-white border border-gray-200 rounded-3xl flex-row items-end px-4 py-1 min-h-[44px]">
@@ -331,6 +834,11 @@ export default function ChatScreen() {
                             style={{ maxHeight: 120, minHeight: 36 }}
                             value={messageText}
                             onChangeText={setMessageText}
+                            onFocus={() => {
+                              setShowAttachments(false);
+                              setShowEmojis(false);
+                              setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+                            }}
                         />
                         <TouchableOpacity
                             className="ml-2 mb-1.5"
@@ -339,18 +847,34 @@ export default function ChatScreen() {
                                 setShowAttachments(false);
                             }}
                         >
-                            <Smile color={showEmojis ? "#208AEF" : "#9CA3AF"} size={22} strokeWidth={2} />
+                            <Smile color={showEmojis ? "#2563EB" : "#9CA3AF"} size={22} strokeWidth={2} />
                         </TouchableOpacity>
                     </View>
 
-                    <TouchableOpacity className="w-11 h-11 bg-[#208AEF] rounded-full items-center justify-center mb-0.5 shadow-sm">
-                        <Send color="white" size={20} strokeWidth={2.5} className="ml-1" />
-                    </TouchableOpacity>
+                    {messageText.trim() ? (
+                        <TouchableOpacity 
+                            onPress={handleSendText}
+                            className="w-11 h-11 rounded-full items-center justify-center mb-0.5 shadow-sm bg-[#2563EB]"
+                        >
+                            <Send color="white" size={20} strokeWidth={2.5} className="ml-1" />
+                        </TouchableOpacity>
+                    ) : (
+                        <TouchableOpacity 
+                            onPress={handleVoiceRecord}
+                            className={`w-11 h-11 rounded-full items-center justify-center mb-0.5 shadow-sm ${isRecording ? 'bg-red-500' : 'bg-[#2563EB]'}`}
+                        >
+                            {isRecording ? (
+                                <Square color="white" size={18} fill="white" />
+                            ) : (
+                                <Mic color="white" size={20} strokeWidth={2.5} />
+                            )}
+                        </TouchableOpacity>
+                    )}
                 </View>
 
                 {/* Expandable Attachment Menu */}
                 {showAttachments && (
-                    <View className="flex-row justify-between items-center px-2 py-4 border-t border-gray-100 mt-2">
+                    <View className="flex-row justify-between items-center px-2 py-3 border-t border-gray-100 mt-2">
                         <TouchableOpacity onPress={handlePickPhoto} className="items-center gap-1.5">
                             <ImageIcon color="#10B981" size={22} strokeWidth={2} />
                             <Text className="text-gray-600 text-[10px] font-medium">Photo</Text>
@@ -367,28 +891,50 @@ export default function ChatScreen() {
                         </TouchableOpacity>
 
                         <TouchableOpacity onPress={handleVideo} className="items-center gap-1.5">
-                            <Video color="#8B5CF6" size={22} strokeWidth={2} />
+                            <VideoIcon color="#8B5CF6" size={22} strokeWidth={2} />
                             <Text className="text-gray-600 text-[10px] font-medium">Video</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity onPress={handleAudio} className="items-center gap-1.5">
-                            <Mic color="#EF4444" size={22} strokeWidth={2} />
-                            <Text className="text-gray-600 text-[10px] font-medium">Audio</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity onPress={handleLocation} disabled={isFetchingLocation} className="items-center gap-1.5">
-                            {isFetchingLocation ? (
-                                <ActivityIndicator size="small" color="#10B981" />
-                            ) : (
-                                <MapPin color="#10B981" size={22} strokeWidth={2} />
-                            )}
-                            <Text className="text-gray-600 text-[10px] font-medium">
-                                {isFetchingLocation ? 'Fetching...' : 'Location'}
-                            </Text>
                         </TouchableOpacity>
                     </View>
                 )}
             </View>
+            
+            {/* Full Image Preview Modal */}
+            <Modal visible={!!selectedImage} transparent={true} animationType="fade" onRequestClose={() => setSelectedImage(null)}>
+                <TouchableOpacity 
+                    activeOpacity={1} 
+                    onPress={() => setSelectedImage(null)} 
+                    style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center', padding: 20 }}
+                >
+                    <View style={{ position: 'absolute', top: 50, right: 20, zIndex: 10, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                        <TouchableOpacity 
+                            onPress={() => selectedImage && handleDownloadFile(selectedImage, 'image.jpg')} 
+                            style={{ backgroundColor: 'rgba(37,99,235,0.9)', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                        >
+                            {downloadingUrl === selectedImage ? (
+                                <ActivityIndicator size="small" color="white" />
+                            ) : (
+                                <>
+                                    <Download size={16} color="white" />
+                                    <Text style={{ color: 'white', fontSize: 13, fontWeight: 'bold' }}>Save to Phone</Text>
+                                </>
+                            )}
+                        </TouchableOpacity>
+                        <TouchableOpacity 
+                            onPress={() => setSelectedImage(null)} 
+                            style={{ backgroundColor: 'rgba(255,255,255,0.25)', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 }}
+                        >
+                            <Text style={{ color: 'white', fontSize: 13, fontWeight: 'bold' }}>Close</Text>
+                        </TouchableOpacity>
+                    </View>
+                    {selectedImage && (
+                        <Image 
+                            source={{ uri: selectedImage }} 
+                            style={{ width: '100%', height: '80%' }} 
+                            resizeMode="contain" 
+                        />
+                    )}
+                </TouchableOpacity>
+            </Modal>
         </KeyboardAvoidingView>
     );
 }

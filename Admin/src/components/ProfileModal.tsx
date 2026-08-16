@@ -1,5 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { X, Camera, User, Mail, Phone, Shield, KeyRound, Eye, EyeOff } from 'lucide-react';
+import { db, auth } from '../services/firebase';
+import { doc, setDoc } from 'firebase/firestore';
+import { updatePassword } from 'firebase/auth';
 
 export interface ProfileData {
   name: string;
@@ -28,6 +31,50 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
   });
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setProfileData({ ...profileData, profilePic: reader.result as string });
+      setIsUploading(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      // 1. Save profile details to Firestore settings/admin_profile
+      const docRef = doc(db, 'settings', 'admin_profile');
+      await setDoc(docRef, profileData);
+
+      // 2. If newPassword is provided, update via auth
+      if (passwordForm.newPassword) {
+        const user = auth.currentUser;
+        if (user) {
+          await updatePassword(user, passwordForm.newPassword);
+          setPasswordForm({ currentPassword: '', newPassword: '' });
+        } else {
+          alert("Please re-login to change password.");
+        }
+      }
+
+      alert("Profile settings saved successfully!");
+      setShowProfileModal(false);
+    } catch (error: any) {
+      alert("Error: " + error.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   if (!showProfileModal) return null;
 
@@ -47,9 +94,16 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
         <div className="p-6 space-y-8">
           {/* Profile Image Section */}
           <div className="flex flex-col sm:flex-row items-center gap-6 pb-6 border-b border-gray-100">
-            <div className="relative group cursor-pointer">
-              <div className="w-24 h-24 rounded-full overflow-hidden border-4 border-white shadow-md">
-                <img src={profileData.profilePic} alt={profileData.name} className="w-full h-full object-cover" />
+            <div 
+              onClick={() => fileInputRef.current?.click()}
+              className="relative group cursor-pointer"
+            >
+              <div className="w-24 h-24 rounded-full overflow-hidden border-4 border-white shadow-md bg-gray-100 flex items-center justify-center">
+                {isUploading ? (
+                  <span className="text-xs text-gray-400 font-semibold">Uploading...</span>
+                ) : (
+                  <img src={profileData.profilePic} alt={profileData.name} className="w-full h-full object-cover" />
+                )}
               </div>
               <div className="absolute inset-0 bg-black/40 rounded-full opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                 <Camera className="text-white" size={24} />
@@ -58,10 +112,22 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
                 <Camera size={14} />
               </div>
             </div>
+            
+            <input 
+              ref={fileInputRef}
+              type="file" 
+              accept="image/*" 
+              className="hidden" 
+              onChange={handleImageChange} 
+            />
+
             <div className="text-center sm:text-left">
               <h3 className="text-lg font-bold text-gray-900">{profileData.name}</h3>
               <p className="text-sm text-gray-500 mb-3">{profileData.role}</p>
-              <button className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg transition-colors">
+              <button 
+                onClick={() => fileInputRef.current?.click()}
+                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg transition-colors"
+              >
                 Upload New Photo
               </button>
             </div>
@@ -193,13 +259,11 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
             Cancel
           </button>
           <button 
-            onClick={() => {
-              alert("Profile settings saved successfully!");
-              setShowProfileModal(false);
-            }}
-            className="px-5 py-2.5 text-sm font-semibold text-white bg-[#2563EB] rounded-xl hover:bg-blue-700 shadow-sm transition-colors"
+            onClick={handleSave}
+            disabled={isSaving}
+            className="px-5 py-2.5 text-sm font-semibold text-white bg-[#2563EB] rounded-xl hover:bg-blue-700 shadow-sm transition-colors disabled:opacity-75"
           >
-            Save Changes
+            {isSaving ? "Saving..." : "Save Changes"}
           </button>
         </div>
       </div>

@@ -2,12 +2,18 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Menu, X, Calendar, Clock, ChevronDown, User, Settings, LogOut } from 'lucide-react';
 import type { ProfileData } from './ProfileModal';
 
+import { Building2 } from 'lucide-react';
+
 interface HeaderProps {
   isSidebarOpen: boolean;
   setIsSidebarOpen: (isOpen: boolean) => void;
   profileData: ProfileData;
   setShowProfileModal: (show: boolean) => void;
   setShowLogoutConfirm: (show: boolean) => void;
+  branchesList: any[];
+  selectedBranchId: string;
+  setSelectedBranchId: (id: string) => void;
+  isChatTab?: boolean;
 }
 
 const Header: React.FC<HeaderProps> = ({
@@ -15,7 +21,11 @@ const Header: React.FC<HeaderProps> = ({
   setIsSidebarOpen,
   profileData,
   setShowProfileModal,
-  setShowLogoutConfirm
+  setShowLogoutConfirm,
+  branchesList,
+  selectedBranchId,
+  setSelectedBranchId,
+  isChatTab = false
 }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
@@ -100,7 +110,7 @@ const Header: React.FC<HeaderProps> = ({
       )}
 
       {/* Desktop Header Content (rendered inside Main Content Area in App.tsx) */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+      <div className={`${isChatTab ? 'hidden md:flex mb-4' : 'flex'} flex-col md:flex-row md:items-center justify-between gap-4 mb-8`}>
         <div>
           <h1 className="text-2xl lg:text-[28px] font-extrabold text-gray-900 flex items-center gap-2 mb-1">
             Good Morning, {profileData.name.split(' ')[0]} <span className="text-2xl">👋</span>
@@ -109,6 +119,24 @@ const Header: React.FC<HeaderProps> = ({
         </div>
 
         <div className="flex items-center gap-4 lg:gap-6 self-start md:self-auto">
+          {/* Branch Switcher */}
+          <div className="relative">
+            <div className="flex items-center bg-white border border-gray-200 rounded-xl px-3 py-2 shadow-sm">
+              <Building2 size={18} className="text-blue-500 mr-2" />
+              <select
+                value={selectedBranchId}
+                onChange={(e) => setSelectedBranchId(e.target.value)}
+                className="bg-transparent text-sm font-semibold text-gray-700 focus:outline-none cursor-pointer appearance-none pr-6 w-32 md:w-48 truncate"
+              >
+                <option value="all">All Branches</option>
+                {branchesList.map(branch => (
+                  <option key={branch.id} value={branch.id}>{branch.name}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="absolute right-3 top-3.5 text-gray-400 pointer-events-none" />
+            </div>
+          </div>
+
           <div className="bg-white px-4 py-2.5 rounded-xl shadow-sm border border-gray-100 hidden md:flex flex-col gap-1.5">
             <div className="flex items-center gap-2">
               <Calendar size={15} className="text-[#2563EB]" strokeWidth={2.5} />

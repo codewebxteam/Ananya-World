@@ -1,10 +1,10 @@
 // components/BottomNav.tsx
 import React from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
-import { Home, CalendarDays, IndianRupee, MessageSquare, User } from 'lucide-react-native';
+import { Home, CalendarDays, IndianRupee, MessageSquare, User, CalendarClock } from 'lucide-react-native';
 
 // Ek custom type banaya taaki error na aaye
-export type TabName = 'Home' | 'Attendance' | 'Salary' | 'Chat' | 'Account';
+export type TabName = 'Home' | 'Attendance' | 'Salary' | 'Chat' | 'Leaves' | 'Account';
 
 interface BottomNavProps {
   activeTab?: TabName;
@@ -33,7 +33,7 @@ export default function BottomNav({ activeTab = 'Home', onTabChange }: BottomNav
             onPress={() => onTabChange && onTabChange(tab.name)}
             activeOpacity={0.7}
             className={`items-center justify-center py-2 px-3 rounded-2xl ${isActive ? 'bg-[#EEF5FF]' : ''}`}
-            style={{ minWidth: 70 }}
+            style={{ flex: 1 }}
           >
             <View className="mb-1 items-center justify-center">
               {/* Salary icon ko match karne ke liye custom styling */}

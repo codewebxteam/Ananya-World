@@ -1,4 +1,8 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
+import { getAuth, initializeAuth, getReactNativePersistence } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 // import { getAnalytics } from "firebase/analytics"; 
 // Note: Analytics is commented out because firebase/analytics relies on browser APIs 
 // and will crash in React Native (Expo Go) by default unless running on Web.
@@ -17,5 +21,11 @@ const firebaseConfig = {
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
 // export const analytics = getAnalytics(app); // Only enable if deploying to web
+
+export const auth = initializeAuth(app, {
+  persistence: getReactNativePersistence(AsyncStorage)
+});
+export const db = getFirestore(app);
+export const storage = getStorage(app);
 
 export { app };
