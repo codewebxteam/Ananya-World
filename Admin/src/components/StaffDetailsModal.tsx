@@ -20,68 +20,79 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
   const [selectedImagePreview, setSelectedImagePreview] = useState<{ title: string; url: string } | null>(null);
   const [activeTab, setActiveTab] = useState<'all' | 'documents' | 'bank' | 'payroll'>('all');
   
-  // Real Attendance Stats
-  const [attendanceStats, setAttendanceStats] = useState({
-    present: 0,
-    late: 0,
-    absent: 0,
-    halfDay: 0,
-    loading: true
-  });
+  // Real Attendance Logs & Selected Month Key
+  const [attendanceLogs, setAttendanceLogs] = useState<any[]>([]);
+  const [selectedMonthKey, setSelectedMonthKey] = useState(`${new Date().getFullYear()}-${new Date().getMonth()}`);
+  const [loadingLogs, setLoadingLogs] = useState(true);
 
   useEffect(() => {
-    if (!isOpen || !staff?.id) return;
+    if (!isOpen || (!staff?.id && !staff?.empId)) return;
 
-    setAttendanceStats(prev => ({ ...prev, loading: true }));
-
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
+    setLoadingLogs(true);
 
     const qAtt = query(
       collection(db, 'attendance'),
-      where('staffId', '==', staff.id)
+      where('staffId', '==', staff.empId || staff.id)
     );
 
     const unsub = onSnapshot(qAtt, (snapshot) => {
-      let present = 0;
-      let late = 0;
-      let absent = 0;
-      let halfDay = 0;
-
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        if (data.date) {
-          const logDate = new Date(data.date);
-          if (logDate.getMonth() === currentMonth && logDate.getFullYear() === currentYear) {
-            const st = data.status || '';
-            if (st === 'Present' || st === 'On Duty') present++;
-            else if (st === 'Late') late++;
-            else if (st === 'Absent') absent++;
-            else if (st === 'Half Day') halfDay++;
-          }
-        }
+      const logs: any[] = [];
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        logs.push({ id: docSnap.id, ...data });
       });
-
-      setAttendanceStats({
-        present,
-        late,
-        absent,
-        halfDay,
-        loading: false
-      });
+      // Sort logs descending by date
+      logs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setAttendanceLogs(logs);
+      setLoadingLogs(false);
     }, (err) => {
       console.log("Error loading attendance stats:", err);
-      setAttendanceStats(prev => ({ ...prev, loading: false }));
+      setLoadingLogs(false);
     });
 
     return () => unsub();
-  }, [isOpen, staff?.id]);
+  }, [isOpen, staff?.id, staff?.empId]);
 
   if (!isOpen || !staff) return null;
 
   const docs = staff.documents || {};
   const bank = staff.bankDetails || {};
+
+  // Recalculate stats dynamically based on the selected month/year filter
+  const filteredLogs = attendanceLogs.filter(log => {
+    if (!log.date) return false;
+    const parts = log.date.split('-');
+    const logYear = parseInt(parts[0]);
+    const logMonth = parseInt(parts[1]) - 1;
+    const [selYear, selMonth] = selectedMonthKey.split('-').map(Number);
+    return logYear === selYear && logMonth === selMonth;
+  });
+
+  let presentCount = 0;
+  let lateCount = 0;
+  let absentCount = 0;
+  let halfDayCount = 0;
+
+  filteredLogs.forEach(log => {
+    const st = log.status || '';
+    if (st === 'Present' || st === 'On Duty') presentCount++;
+    else if (st === 'Late') lateCount++;
+    else if (st === 'Absent') absentCount++;
+    else if (st === 'Half Day') halfDayCount++;
+  });
+
+  const getMonthOptions = () => {
+    const options = [];
+    const now = new Date();
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      options.push({
+        label: d.toLocaleString('default', { month: 'long', year: 'numeric' }),
+        value: `${d.getFullYear()}-${d.getMonth()}`
+      });
+    }
+    return options;
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-[#F8FAFC] overflow-y-auto w-full h-full flex flex-col animate-in fade-in duration-200">
@@ -343,28 +354,95 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
                 </div>
 
                 <div className="pt-2">
-                  <div className="flex justify-between items-center mb-2">
-                    <p className="text-gray-400 font-semibold uppercase text-[10px]">Current Month Attendance</p>
-                    {attendanceStats.loading && <Loader2 size={12} className="animate-spin text-blue-500" />}
+                  <div className="flex justify-between items-center mb-3">
+                    <p className="text-gray-400 font-semibold uppercase text-[10px]">Monthly Attendance Stats</p>
+                    <div className="flex items-center gap-1.5">
+                      {loadingLogs && <Loader2 size={12} className="animate-spin text-blue-500" />}
+                      <select 
+                        value={selectedMonthKey} 
+                        onChange={(e) => setSelectedMonthKey(e.target.value)}
+                        className="bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold text-gray-700 px-2 py-1 outline-none cursor-pointer"
+                      >
+                        {getMonthOptions().map(opt => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                   <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 text-center">
                     <div className="bg-green-50 p-2.5 rounded-xl border border-green-100">
-                      <p className="text-base font-bold text-green-700">{attendanceStats.present}</p>
+                      <p className="text-base font-bold text-green-700">{presentCount}</p>
                       <p className="text-[9px] font-bold text-green-600 uppercase">Present</p>
                     </div>
                     <div className="bg-amber-50 p-2.5 rounded-xl border border-amber-100">
-                      <p className="text-base font-bold text-amber-700">{attendanceStats.late}</p>
+                      <p className="text-base font-bold text-amber-700">{lateCount}</p>
                       <p className="text-[9px] font-bold text-amber-600 uppercase">Late</p>
                     </div>
                     <div className="bg-red-50 p-2.5 rounded-xl border border-red-100">
-                      <p className="text-base font-bold text-red-700">{attendanceStats.absent}</p>
+                      <p className="text-base font-bold text-red-700">{absentCount}</p>
                       <p className="text-[9px] font-bold text-red-600 uppercase">Absent</p>
                     </div>
                     <div className="bg-orange-50 p-2.5 rounded-xl border border-orange-100 hidden sm:block">
-                      <p className="text-base font-bold text-orange-700">{attendanceStats.halfDay}</p>
+                      <p className="text-base font-bold text-orange-700">{halfDayCount}</p>
                       <p className="text-[9px] font-bold text-orange-600 uppercase">Half Day</p>
                     </div>
                   </div>
+                </div>
+
+                <div className="border-t border-gray-100 pt-4 mt-4">
+                  <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Daily Logs History</h4>
+                  
+                  {loadingLogs ? (
+                    <div className="py-4 text-center text-xs text-gray-500">Loading history logs...</div>
+                  ) : filteredLogs.length === 0 ? (
+                    <div className="py-4 text-center text-xs text-gray-400 font-medium">No logs recorded for this month.</div>
+                  ) : (
+                    <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                      {filteredLogs.map(log => {
+                        let punchInTime = 'N/A';
+                        let punchOutTime = 'N/A';
+                        if (log.punchIn) {
+                          try {
+                            punchInTime = new Date(log.punchIn).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                          } catch {}
+                        }
+                        if (log.punchOut) {
+                          try {
+                            punchOutTime = new Date(log.punchOut).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                          } catch {}
+                        }
+
+                        const statusStyle = log.status === 'Present' || log.status === 'On Duty'
+                          ? 'text-green-600 bg-green-50 border-green-100'
+                          : log.status === 'Late'
+                            ? 'text-amber-600 bg-amber-50 border-amber-100'
+                            : log.status === 'Half Day'
+                              ? 'text-orange-600 bg-orange-50 border-orange-100'
+                              : 'text-red-500 bg-red-50 border-red-100';
+
+                        return (
+                          <div key={log.id} className="flex justify-between items-center bg-gray-50/50 p-2.5 rounded-xl border border-gray-100 hover:bg-gray-50 transition-colors">
+                            <div>
+                              <p className="font-bold text-gray-800 text-[11px]">
+                                {new Date(log.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                              </p>
+                              <p className="text-[10px] text-gray-500 mt-0.5">
+                                In: <span className="font-bold text-gray-700">{punchInTime}</span> | Out: <span className="font-bold text-gray-700">{punchOutTime}</span>
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold border ${statusStyle}`}>
+                                {log.status || 'Present'}
+                              </span>
+                              <p className="text-[9px] text-gray-400 mt-1 font-bold">
+                                {log.hours ? `${log.hours} worked` : '--:--'}
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

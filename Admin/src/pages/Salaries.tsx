@@ -104,7 +104,7 @@ export default function Salaries() {
             cycleStart.setMonth(cycleStart.getMonth() - 1);
             cycleStart.setDate(cycleStart.getDate() + 1);
 
-            const qAtt = query(collection(db, 'attendance'), where('staffId', '==', staff.id), where('date', '>=', cycleStart.toISOString().split('T')[0]), where('date', '<=', cycleEnd.toISOString().split('T')[0]));
+            const qAtt = query(collection(db, 'attendance'), where('staffId', '==', staff.empId || staff.id), where('date', '>=', cycleStart.toISOString().split('T')[0]), where('date', '<=', cycleEnd.toISOString().split('T')[0]));
             const attSnap = await getDocs(qAtt);
             const attendanceMap = new Map();
             attSnap.forEach(d => attendanceMap.set(d.data().date, d.data().status));

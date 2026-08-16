@@ -27,32 +27,39 @@ export default function Attendance() {
           forgiven: true
         });
 
-        // 2. Query payroll and update if exists
-        const qPayroll = query(collection(db, 'payroll'), where('staffId', '==', log.staffId));
-        const querySnapshot = await getDocs(qPayroll);
-        
-        for (const docSnap of querySnapshot.docs) {
-          const pData = docSnap.data();
-          const details = [...(pData.deductionDetails || [])];
-          const itemIndex = details.findIndex((d: any) => d.date === log.date);
+        // 2. Resolve empId to User UID
+        const qUser = query(collection(db, 'users'), where('empId', '==', log.staffId));
+        const userSnap = await getDocs(qUser);
+        if (!userSnap.empty) {
+          const userUid = userSnap.docs[0].id;
           
-          if (itemIndex !== -1 && !details[itemIndex].forgiven) {
-            details[itemIndex].forgiven = true;
+          // 3. Query payroll and update if exists
+          const qPayroll = query(collection(db, 'payroll'), where('staffId', '==', userUid));
+          const querySnapshot = await getDocs(qPayroll);
+          
+          for (const docSnap of querySnapshot.docs) {
+            const pData = docSnap.data();
+            const details = [...(pData.deductionDetails || [])];
+            const itemIndex = details.findIndex((d: any) => d.date === log.date);
             
-            // Recalculate
-            const forgivenDays = details.filter((d: any) => d.forgiven).reduce((sum: number, d: any) => sum + d.deduction, 0);
-            const originalDeductionDays = pData.deductionDays || 0;
-            const newDeductionDays = Math.max(0, originalDeductionDays - forgivenDays);
-            const perDaySalary = pData.perDaySalary || 0;
-            const baseSalary = pData.baseSalary || 0;
-            const newExpected = Math.max(0, Math.round(baseSalary - (newDeductionDays * perDaySalary)));
+            if (itemIndex !== -1 && !details[itemIndex].forgiven) {
+              details[itemIndex].forgiven = true;
+              
+              // Recalculate
+              const forgivenDays = details.filter((d: any) => d.forgiven).reduce((sum: number, d: any) => sum + d.deduction, 0);
+              const originalDeductionDays = pData.deductionDays || 0;
+              const newDeductionDays = Math.max(0, originalDeductionDays - forgivenDays);
+              const perDaySalary = pData.perDaySalary || 0;
+              const baseSalary = pData.baseSalary || 0;
+              const newExpected = Math.max(0, Math.round(baseSalary - (newDeductionDays * perDaySalary)));
 
-            await updateDoc(doc(db, 'payroll', docSnap.id), {
-              deductionDetails: details,
-              deductionDays: newDeductionDays,
-              expectedSalary: newExpected,
-              updatedAt: serverTimestamp()
-            });
+              await updateDoc(doc(db, 'payroll', docSnap.id), {
+                deductionDetails: details,
+                deductionDays: newDeductionDays,
+                expectedSalary: newExpected,
+                updatedAt: serverTimestamp()
+              });
+            }
           }
         }
 
