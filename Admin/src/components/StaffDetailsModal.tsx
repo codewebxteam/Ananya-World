@@ -3,7 +3,7 @@ import {
   ArrowLeft, X, User, MapPin, Briefcase, Hash, Calendar, Phone, Mail, 
   Clock, CreditCard, Landmark, FileText, CheckCircle2, AlertCircle, 
   ShieldCheck, Download, Edit, KeyRound, ExternalLink, Eye, Image as ImageIcon,
-  Building2, Sparkles, AlertTriangle, Loader2
+  Building2, Sparkles, AlertTriangle, Loader2, History
 } from 'lucide-react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -92,6 +92,25 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
       });
     }
     return options;
+  };
+
+  const formatShiftTimings = (start: string, end: string) => {
+    const formatTimeStr = (timeStr: string) => {
+      if (!timeStr) return '';
+      const parts = timeStr.split(':');
+      if (parts.length < 2) return timeStr;
+      let hours = parseInt(parts[0]);
+      const minutes = parts[1];
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      hours = hours % 12;
+      hours = hours ? hours : 12; // the hour '0' should be '12'
+      return `${hours}:${minutes} ${ampm}`;
+    };
+
+    const startTime = start || '09:00';
+    const endTime = end || '17:00'; // Default 5:00 PM instead of 18:00 (6:00 PM)
+
+    return `${formatTimeStr(startTime)} - ${formatTimeStr(endTime)}`;
   };
 
   return (
@@ -255,7 +274,8 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
 
         {/* ----- GRID CONTAINER FOR DETAILS CARDS ----- */}
         {(activeTab === 'all' || activeTab === 'payroll') && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             
             {/* Personal Information */}
             <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 space-y-4">
@@ -323,7 +343,7 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <p className="text-gray-400 font-semibold uppercase text-[10px]">Shift Timings</p>
-                    <p className="font-semibold text-gray-800 mt-0.5">{staff.shiftStartTime || '09:00'} - {staff.shiftEndTime || '18:00'}</p>
+                    <p className="font-semibold text-gray-800 mt-0.5">{formatShiftTimings(staff.shiftStartTime, staff.shiftEndTime)}</p>
                   </div>
                   <div>
                     <p className="text-gray-400 font-semibold uppercase text-[10px]">Weekly Off</p>
@@ -388,67 +408,97 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
                     </div>
                   </div>
                 </div>
+            </div>
+          </div>
+        </div>
 
-                <div className="border-t border-gray-100 pt-4 mt-4">
-                  <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Daily Logs History</h4>
-                  
-                  {loadingLogs ? (
-                    <div className="py-4 text-center text-xs text-gray-500">Loading history logs...</div>
-                  ) : filteredLogs.length === 0 ? (
-                    <div className="py-4 text-center text-xs text-gray-400 font-medium">No logs recorded for this month.</div>
-                  ) : (
-                    <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
-                      {filteredLogs.map(log => {
-                        let punchInTime = 'N/A';
-                        let punchOutTime = 'N/A';
-                        if (log.punchIn) {
-                          try {
-                            punchInTime = new Date(log.punchIn).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-                          } catch {}
-                        }
-                        if (log.punchOut) {
-                          try {
-                            punchOutTime = new Date(log.punchOut).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-                          } catch {}
-                        }
-
-                        const statusStyle = log.status === 'Present' || log.status === 'On Duty'
-                          ? 'text-green-600 bg-green-50 border-green-100'
-                          : log.status === 'Late'
-                            ? 'text-amber-600 bg-amber-50 border-amber-100'
-                            : log.status === 'Half Day'
-                              ? 'text-orange-600 bg-orange-50 border-orange-100'
-                              : 'text-red-500 bg-red-50 border-red-100';
-
-                        return (
-                          <div key={log.id} className="flex justify-between items-center bg-gray-50/50 p-2.5 rounded-xl border border-gray-100 hover:bg-gray-50 transition-colors">
-                            <div>
-                              <p className="font-bold text-gray-800 text-[11px]">
-                                {new Date(log.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
-                              </p>
-                              <p className="text-[10px] text-gray-500 mt-0.5">
-                                In: <span className="font-bold text-gray-700">{punchInTime}</span> | Out: <span className="font-bold text-gray-700">{punchOutTime}</span>
-                              </p>
-                            </div>
-                            <div className="text-right">
-                              <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold border ${statusStyle}`}>
-                                {log.status || 'Present'}
-                              </span>
-                              <p className="text-[9px] text-gray-400 mt-1 font-bold">
-                                {log.hours ? `${log.hours} worked` : '--:--'}
-                              </p>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
+          {/* Daily Logs History (Full-Width Card Below the 3 cards) */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-gray-100 pb-4 mb-4 gap-3">
+              <div>
+                <h3 className="font-bold text-gray-900 text-base flex items-center gap-2">
+                  <History size={18} className="text-blue-600" /> Daily Attendance Logs History
+                </h3>
+                <p className="text-xs text-gray-500 mt-0.5">Detailed daily punch-in, punch-out, and active hours logs</p>
+              </div>
+              <div className="flex items-center gap-1.5 self-end sm:self-auto">
+                {loadingLogs && <Loader2 size={12} className="animate-spin text-blue-500" />}
+                <select 
+                  value={selectedMonthKey} 
+                  onChange={(e) => setSelectedMonthKey(e.target.value)}
+                  className="bg-gray-50 border border-gray-200 rounded-lg text-xs font-bold text-gray-700 px-3 py-1.5 outline-none cursor-pointer focus:border-blue-500"
+                >
+                  {getMonthOptions().map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
               </div>
             </div>
 
+            {loadingLogs ? (
+              <div className="py-8 text-center text-xs text-gray-500">Loading history logs...</div>
+            ) : filteredLogs.length === 0 ? (
+              <div className="py-8 text-center text-xs text-gray-400 font-medium">No logs recorded for the selected month.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[600px]">
+                  <thead>
+                    <tr className="border-b border-gray-100 bg-gray-50/50">
+                      <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase">Date</th>
+                      <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase">Status</th>
+                      <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase">Punch In</th>
+                      <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase">Punch Out</th>
+                      <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase">Working Hours</th>
+                      <th className="py-3 px-4 text-xs font-bold text-gray-500 uppercase">Location Info</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredLogs.map(log => {
+                      let punchInTime = 'N/A';
+                      let punchOutTime = 'N/A';
+                      if (log.punchIn) {
+                        try {
+                          punchInTime = new Date(log.punchIn).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                        } catch {}
+                      }
+                      if (log.punchOut) {
+                        try {
+                          punchOutTime = new Date(log.punchOut).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                        } catch {}
+                      }
+
+                      const statusStyle = log.status === 'Present' || log.status === 'On Duty'
+                        ? 'text-green-600 bg-green-50 border-green-100'
+                        : log.status === 'Late'
+                          ? 'text-amber-600 bg-amber-50 border-amber-100'
+                          : log.status === 'Half Day'
+                            ? 'text-orange-600 bg-orange-50 border-orange-100'
+                            : 'text-red-500 bg-red-50 border-red-100';
+
+                      return (
+                        <tr key={log.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/30 transition-colors">
+                          <td className="py-3.5 px-4 text-xs font-bold text-gray-800">
+                            {new Date(log.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                          </td>
+                          <td className="py-3.5 px-4">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold border ${statusStyle}`}>
+                              {log.status || 'Present'}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-xs text-gray-700 font-semibold">{punchInTime}</td>
+                          <td className="py-3.5 px-4 text-xs text-gray-700 font-semibold">{punchOutTime}</td>
+                          <td className="py-3.5 px-4 text-xs text-gray-800 font-bold">{log.hours || '--:--'}</td>
+                          <td className="py-3.5 px-4 text-xs text-gray-500 max-w-[250px] truncate" title={log.locationIn}>{log.locationIn || 'N/A'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        )}
+        </>
+      )}
 
         {/* ----- BANK ACCOUNT DETAILS SECTION ----- */}
         {(activeTab === 'all' || activeTab === 'bank') && (
