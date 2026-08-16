@@ -696,7 +696,7 @@ export default function AttendanceScreen() {
         iconBgClass: 'bg-[#138A43]',
         icon: <MapPin color="white" size={20} />,
         title: 'Punched In (On Duty)',
-        subtitle: 'Location Verified',
+        subtitle: userRole === 'Field' ? 'Live tracking is active.' : 'Office Location Verified.',
         disabled: false
       };
     }
@@ -705,8 +705,8 @@ export default function AttendanceScreen() {
         bgClass: 'bg-[#EFF6FF] border-blue-100',
         iconBgClass: 'bg-[#3B82F6]',
         icon: <Globe color="white" size={20} />,
-        title: 'Location Acquired',
-        subtitle: 'You can punch in from anywhere.',
+        title: 'Punch In to Start Duty',
+        subtitle: 'Your location will be acquired.',
         disabled: false
       };
     }
@@ -715,7 +715,7 @@ export default function AttendanceScreen() {
         bgClass: 'bg-[#F0FDF4] border-green-50',
         iconBgClass: 'bg-[#138A43]',
         icon: <MapPin color="white" size={20} />,
-        title: 'You are in office',
+        title: 'You are in the office',
         subtitle: 'Office Location Verified.',
         disabled: false
       };
