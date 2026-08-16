@@ -824,20 +824,19 @@ export default function HomeScreen() {
                 <Text className="text-gray-500 text-[11px] mt-0.5">{bannerData.subtitle}</Text>
               </View>
             </View>
-            {!punchOutTime && !bannerData.disabled && (
+            {!punchOutTime && (!bannerData.disabled || bannerData.title === 'Outside Office Area') && (
               <TouchableOpacity 
                 activeOpacity={0.8}
                 onPress={handlePunch}
+                disabled={bannerData.disabled && bannerData.title === 'Outside Office Area'}
                 className={`px-4 py-2.5 rounded-xl shadow-sm ${
-                  punchInTime 
-                    ? 'bg-red-500' 
-                    : (userRole === 'Office' && !isNearOffice) 
-                      ? 'bg-gray-400' 
-                      : 'bg-[#138A43]'
+                  bannerData.disabled 
+                    ? 'bg-gray-300 shadow-none' 
+                    : punchInTime ? 'bg-red-500' : 'bg-[#138A43]'
                 }`}
               >
-                <Text className="text-white text-sm font-bold">
-                  {punchInTime ? 'Punch Out' : 'Punch In Now'}
+                <Text className={`text-sm font-bold ${bannerData.disabled ? 'text-gray-600' : 'text-white'}`}>
+                  {bannerData.disabled ? 'Outside Office' : punchInTime ? 'Punch Out' : 'Punch In Now'}
                 </Text>
               </TouchableOpacity>
             )}
