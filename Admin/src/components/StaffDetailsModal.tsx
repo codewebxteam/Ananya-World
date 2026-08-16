@@ -232,7 +232,7 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
               </div>
               <div className="bg-white/10 backdrop-blur-md border border-white/15 rounded-2xl p-3.5 text-center min-w-[120px]">
                 <p className="text-[10px] text-blue-200 uppercase font-semibold tracking-wider">Shift Timing</p>
-                <p className="text-sm font-bold text-white mt-1">{staff.shiftStartTime || '09:00'} - {staff.shiftEndTime || '18:00'}</p>
+                <p className="text-sm font-bold text-white mt-1">{formatShiftTimings(staff.shiftStartTime, staff.shiftEndTime)}</p>
               </div>
             </div>
           </div>
