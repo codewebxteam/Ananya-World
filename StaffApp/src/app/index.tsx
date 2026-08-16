@@ -149,6 +149,7 @@ export default function HomeScreen() {
           const parsed = JSON.parse(storedUser);
           setUserData(parsed);
           globalHomeCache.userData = parsed;
+          setUserRole((parsed.staffType || parsed.department || 'Office').includes('Field') ? 'Field' : 'Office');
 
           // Realtime listener for User Profile updates
           const userDocRef = doc(db, 'users', parsed.uid);
@@ -157,6 +158,7 @@ export default function HomeScreen() {
               const freshUserData = snap.data();
               setUserData(freshUserData);
               globalHomeCache.userData = freshUserData;
+              setUserRole((freshUserData.staffType || freshUserData.department || 'Office').includes('Field') ? 'Field' : 'Office');
               await AsyncStorage.setItem('userData', JSON.stringify(freshUserData));
             }
           });
