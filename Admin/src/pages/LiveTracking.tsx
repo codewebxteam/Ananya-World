@@ -227,16 +227,16 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
 
         const bId = profile?.branchId || data.branchId || '';
 
-        if (isPunchedIn && data.latitudeIn && data.longitudeIn) {
+        if (isPunchedIn && (data.currentLatitude || data.latitudeIn) && (data.currentLongitude || data.longitudeIn)) {
           activeList.push({
             id: docSnap.id,
             staffId: data.staffId,
             name: data.name || 'Unknown',
             role: data.dept || 'Field Staff',
             avatar: data.avatar || null,
-            lat: Number(data.latitudeIn),
-            lng: Number(data.longitudeIn),
-            location: data.locationIn || 'Unknown Location',
+            lat: Number(data.currentLatitude || data.latitudeIn),
+            lng: Number(data.currentLongitude || data.longitudeIn),
+            location: data.currentLocation || data.locationIn || 'Unknown Location',
             time: formattedTime,
             punchInTime: data.punchIn,
             status: 'On Field',
@@ -251,7 +251,7 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
           staffId: data.staffId,
           name: data.name || 'Unknown',
           avatar: data.avatar || null,
-          location: isPunchedIn ? (data.locationIn || 'Not Set') : (data.locationOut || 'Not Set'),
+          location: isPunchedIn ? (data.currentLocation || data.locationIn || 'Not Set') : (data.locationOut || 'Not Set'),
           updated: isPunchedIn ? `Punched In at ${formattedTime}` : (data.punchOut ? `Punched Out at ${new Date(data.punchOut).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}` : 'N/A'),
           battery: Math.floor(Math.random() * (98 - 72 + 1)) + 72,
           batColor: 'bg-green-500',

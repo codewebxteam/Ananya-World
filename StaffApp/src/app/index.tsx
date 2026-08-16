@@ -538,6 +538,67 @@ export default function HomeScreen() {
     }
   }, [isAttLoaded, isLeavesLoaded]);
 
+  useEffect(() => {
+    let watchSubscription: any = null;
+
+    const startTracking = async () => {
+      if (!userData || userRole !== 'Field' || !punchInTime || punchOutTime) {
+        if (watchSubscription) {
+          watchSubscription.remove();
+          watchSubscription = null;
+        }
+        return;
+      }
+
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+
+        watchSubscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.Balanced,
+            timeInterval: 20000, // Every 20 seconds
+            distanceInterval: 20, // Or every 20 meters change
+          },
+          async (location) => {
+            const lat = location.coords.latitude;
+            const lng = location.coords.longitude;
+
+            const todayStr = new Date().toISOString().split('T')[0];
+            const attendanceId = `${userData.empId}_${todayStr}`;
+            const attRef = doc(db, 'attendance', attendanceId);
+
+            let currentAddr = 'Location Shared';
+            try {
+              const geocode = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+              if (geocode.length > 0) {
+                const addr = geocode[0];
+                currentAddr = [addr.name, addr.street, addr.city, addr.region].filter(Boolean).join(', ');
+              }
+            } catch {}
+
+            await updateDoc(attRef, {
+              currentLatitude: lat,
+              currentLongitude: lng,
+              currentLocation: currentAddr,
+              lastLocationUpdate: new Date().toISOString()
+            }).catch(err => console.log("Failed to update active location:", err));
+          }
+        );
+      } catch (err) {
+        console.log("Error starting location watch:", err);
+      }
+    };
+
+    startTracking();
+
+    return () => {
+      if (watchSubscription) {
+        watchSubscription.remove();
+      }
+    };
+  }, [punchInTime, punchOutTime, userRole, userData?.empId]);
+
   const handlePunch = async () => {
     if (!userData) return;
 
