@@ -141,6 +141,28 @@ export default function AttendanceScreen() {
           globalAttendanceCache.userData = parsed;
           setUserRole((parsed.staffType || 'Office').includes('Field') ? 'Field' : 'Office');
 
+          const todayStr = new Date().toISOString().split('T')[0];
+
+          // Immediately restore cached today's punch state to avoid any delay/flicker
+          const cachedIn = await AsyncStorage.getItem(`punchIn_${todayStr}`);
+          const cachedOut = await AsyncStorage.getItem(`punchOut_${todayStr}`);
+          if (cachedIn) {
+            const pin = new Date(cachedIn);
+            setPunchInTime(pin);
+            globalAttendanceCache.punchInTime = pin;
+          } else {
+            setPunchInTime(null);
+            globalAttendanceCache.punchInTime = null;
+          }
+          if (cachedOut) {
+            const pout = new Date(cachedOut);
+            setPunchOutTime(pout);
+            globalAttendanceCache.punchOutTime = pout;
+          } else {
+            setPunchOutTime(null);
+            globalAttendanceCache.punchOutTime = null;
+          }
+
           // Realtime listener for User Profile updates
           const userDocRef = doc(db, 'users', parsed.uid);
           unsubUser = onSnapshot(userDocRef, async (snap) => {
@@ -164,15 +186,32 @@ export default function AttendanceScreen() {
               const pIn = new Date(attData.punchIn);
               setPunchInTime(pIn);
               globalAttendanceCache.punchInTime = pIn;
+              await AsyncStorage.setItem(`punchIn_${today}`, attData.punchIn);
+            } else {
+              setPunchInTime(null);
+              globalAttendanceCache.punchInTime = null;
+              await AsyncStorage.removeItem(`punchIn_${today}`);
             }
             if (attData.punchOut) {
               const pOut = new Date(attData.punchOut);
               setPunchOutTime(pOut);
               globalAttendanceCache.punchOutTime = pOut;
+              await AsyncStorage.setItem(`punchOut_${today}`, attData.punchOut);
+            } else {
+              setPunchOutTime(null);
+              globalAttendanceCache.punchOutTime = null;
+              await AsyncStorage.removeItem(`punchOut_${today}`);
             }
             if (attData.locationIn) {
               setLocationAddress(attData.locationIn);
             }
+          } else {
+            setPunchInTime(null);
+            setPunchOutTime(null);
+            globalAttendanceCache.punchInTime = null;
+            globalAttendanceCache.punchOutTime = null;
+            await AsyncStorage.removeItem(`punchIn_${today}`);
+            await AsyncStorage.removeItem(`punchOut_${today}`);
           }
 
           // 1. Realtime Listener for Approved Leaves (for today check and history merge)
@@ -543,6 +582,7 @@ export default function AttendanceScreen() {
       const now = new Date();
       setPunchInTime(now);
       globalAttendanceCache.punchInTime = now;
+      await AsyncStorage.setItem(`punchIn_${today}`, now.toISOString());
       
       try {
         await setDoc(attRef, {
@@ -565,6 +605,7 @@ export default function AttendanceScreen() {
       const now = new Date();
       setPunchOutTime(now);
       globalAttendanceCache.punchOutTime = now;
+      await AsyncStorage.setItem(`punchOut_${today}`, now.toISOString());
       
       const diffMs = now.getTime() - punchInTime.getTime();
       const hoursStr = `${Math.floor(diffMs / 3600000)}h ${Math.floor((diffMs % 3600000) / 60000)}m`;

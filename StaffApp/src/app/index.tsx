@@ -151,6 +151,28 @@ export default function HomeScreen() {
           globalHomeCache.userData = parsed;
           setUserRole((parsed.staffType || parsed.department || 'Office').includes('Field') ? 'Field' : 'Office');
 
+          const todayStr = new Date().toISOString().split('T')[0];
+
+          // Immediately restore cached today's punch state to avoid any delay/flicker
+          const cachedIn = await AsyncStorage.getItem(`punchIn_${todayStr}`);
+          const cachedOut = await AsyncStorage.getItem(`punchOut_${todayStr}`);
+          if (cachedIn) {
+            const pin = new Date(cachedIn);
+            setPunchInTime(pin);
+            globalHomeCache.punchInTime = pin;
+          } else {
+            setPunchInTime(null);
+            globalHomeCache.punchInTime = null;
+          }
+          if (cachedOut) {
+            const pout = new Date(cachedOut);
+            setPunchOutTime(pout);
+            globalHomeCache.punchOutTime = pout;
+          } else {
+            setPunchOutTime(null);
+            globalHomeCache.punchOutTime = null;
+          }
+
           // Realtime listener for User Profile updates
           const userDocRef = doc(db, 'users', parsed.uid);
           unsubUser = onSnapshot(userDocRef, async (snap) => {
@@ -207,12 +229,29 @@ export default function HomeScreen() {
               const pIn = new Date(attData.punchIn);
               setPunchInTime(pIn);
               globalHomeCache.punchInTime = pIn;
+              await AsyncStorage.setItem(`punchIn_${today}`, attData.punchIn);
+            } else {
+              setPunchInTime(null);
+              globalHomeCache.punchInTime = null;
+              await AsyncStorage.removeItem(`punchIn_${today}`);
             }
             if (attData.punchOut) {
               const pOut = new Date(attData.punchOut);
               setPunchOutTime(pOut);
               globalHomeCache.punchOutTime = pOut;
+              await AsyncStorage.setItem(`punchOut_${today}`, attData.punchOut);
+            } else {
+              setPunchOutTime(null);
+              globalHomeCache.punchOutTime = null;
+              await AsyncStorage.removeItem(`punchOut_${today}`);
             }
+          } else {
+            setPunchInTime(null);
+            setPunchOutTime(null);
+            globalHomeCache.punchInTime = null;
+            globalHomeCache.punchOutTime = null;
+            await AsyncStorage.removeItem(`punchIn_${today}`);
+            await AsyncStorage.removeItem(`punchOut_${today}`);
           }
 
           // 2. Realtime listener for Attendance Overview & Salary calculations
@@ -534,6 +573,8 @@ export default function HomeScreen() {
 
       const now = new Date();
       setPunchInTime(now);
+      globalHomeCache.punchInTime = now;
+      await AsyncStorage.setItem(`punchIn_${today}`, now.toISOString());
 
       try {
         await setDoc(attRef, {
@@ -556,6 +597,8 @@ export default function HomeScreen() {
     } else if (!punchOutTime) {
       const now = new Date();
       setPunchOutTime(now);
+      globalHomeCache.punchOutTime = now;
+      await AsyncStorage.setItem(`punchOut_${today}`, now.toISOString());
 
       let locationAddress = 'Unknown Location';
       let coords: { latitude: number; longitude: number } | null = null;
