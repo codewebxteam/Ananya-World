@@ -35,7 +35,7 @@
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_LOCATION"
       ],
-      "package": "com.localshaadi.StaffApp"
+      "package": "com.codewebx.ananyaworld"
     },
     "web": {
       "bundler": "metro",
