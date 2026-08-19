@@ -29,6 +29,76 @@ export default function LeavesScreen() {
   const [leaveReason, setLeaveReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Calendar Picker States
+  const [showCalendarModal, setShowCalendarModal] = useState(false);
+  const [calendarTarget, setCalendarTarget] = useState<'start' | 'end'>('start');
+  const [calendarViewDate, setCalendarViewDate] = useState(new Date());
+
+  const openCalendarPicker = (target: 'start' | 'end') => {
+    setCalendarTarget(target);
+    const currentDateVal = target === 'start' ? startDate : endDate;
+    if (currentDateVal) {
+      try {
+        const d = new Date(currentDateVal);
+        if (!isNaN(d.getTime())) {
+          setCalendarViewDate(d);
+        }
+      } catch {}
+    }
+    setShowCalendarModal(true);
+  };
+
+  const changeCalendarMonth = (offset: number) => {
+    const next = new Date(calendarViewDate);
+    next.setMonth(next.getMonth() + offset);
+    setCalendarViewDate(next);
+  };
+
+  const selectCalendarDate = (dateStr: string) => {
+    if (calendarTarget === 'start') {
+      setStartDate(dateStr);
+      if (leaveType === 'Single Day' || endDate < dateStr) {
+        setEndDate(dateStr);
+      }
+    } else {
+      setEndDate(dateStr);
+    }
+    setShowCalendarModal(false);
+  };
+
+  const formatDateDisplay = (dateStr: string) => {
+    if (!dateStr) return 'Select Date';
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
+      return d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  const generateCalendarGrid = (viewDate: Date) => {
+    const year = viewDate.getFullYear();
+    const month = viewDate.getMonth();
+    const firstDayOfWeek = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    const grid: ({ day: number; dateStr: string } | null)[] = [];
+
+    for (let i = 0; i < firstDayOfWeek; i++) {
+      grid.push(null);
+    }
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const mStr = String(month + 1).padStart(2, '0');
+      const dStr = String(d).padStart(2, '0');
+      const dateStr = `${year}-${mStr}-${dStr}`;
+      grid.push({ day: d, dateStr });
+    }
+
+    return grid;
+  };
+
   useEffect(() => {
     let unsubLeaves: any;
     let unsubOffs: any;
@@ -325,29 +395,39 @@ export default function LeavesScreen() {
 
               {/* Start Date */}
               <View className="mb-4">
-                <Text className="text-xs font-bold text-gray-400 mb-1 uppercase tracking-wider">Start Date (YYYY-MM-DD)</Text>
-                <View className="bg-[#F8FAFC] border border-gray-100 rounded-xl px-3 py-3 shadow-sm">
-                  <TextInput 
-                    value={startDate}
-                    onChangeText={setStartDate}
-                    placeholder="YYYY-MM-DD"
-                    className="text-black text-sm font-semibold"
-                  />
-                </View>
+                <Text className="text-xs font-bold text-gray-400 mb-1.5 uppercase tracking-wider">Start Date</Text>
+                <TouchableOpacity 
+                  activeOpacity={0.7}
+                  onPress={() => openCalendarPicker('start')}
+                  className="bg-[#F8FAFC] border border-gray-200 rounded-xl px-4 py-3 flex-row items-center justify-between shadow-sm"
+                >
+                  <View className="flex-row items-center gap-2">
+                    <Calendar color="#208AEF" size={18} strokeWidth={2} />
+                    <Text className="text-black text-sm font-bold">
+                      {formatDateDisplay(startDate)}
+                    </Text>
+                  </View>
+                  <Text className="text-[#208AEF] text-xs font-bold bg-blue-50 px-2 py-1 rounded-md">Select Date</Text>
+                </TouchableOpacity>
               </View>
 
               {/* End Date (for Multi-Day) */}
               {leaveType === 'Multi-Day' && (
                 <View className="mb-4">
-                  <Text className="text-xs font-bold text-gray-400 mb-1 uppercase tracking-wider">End Date (YYYY-MM-DD)</Text>
-                  <View className="bg-[#F8FAFC] border border-gray-100 rounded-xl px-3 py-3 shadow-sm">
-                    <TextInput 
-                      value={endDate}
-                      onChangeText={setEndDate}
-                      placeholder="YYYY-MM-DD"
-                      className="text-black text-sm font-semibold"
-                    />
-                  </View>
+                  <Text className="text-xs font-bold text-gray-400 mb-1.5 uppercase tracking-wider">End Date</Text>
+                  <TouchableOpacity 
+                    activeOpacity={0.7}
+                    onPress={() => openCalendarPicker('end')}
+                    className="bg-[#F8FAFC] border border-gray-200 rounded-xl px-4 py-3 flex-row items-center justify-between shadow-sm"
+                  >
+                    <View className="flex-row items-center gap-2">
+                      <Calendar color="#208AEF" size={18} strokeWidth={2} />
+                      <Text className="text-black text-sm font-bold">
+                        {formatDateDisplay(endDate)}
+                      </Text>
+                    </View>
+                    <Text className="text-[#208AEF] text-xs font-bold bg-blue-50 px-2 py-1 rounded-md">Select Date</Text>
+                  </TouchableOpacity>
                 </View>
               )}
 
@@ -379,6 +459,105 @@ export default function LeavesScreen() {
                 )}
               </TouchableOpacity>
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Calendar Date Picker Modal */}
+      <Modal
+        visible={showCalendarModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowCalendarModal(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: 'white', borderRadius: 24, padding: 20, width: '100%', maxWidth: 360 }}>
+            {/* Header: Month & Navigation */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <TouchableOpacity
+                onPress={() => changeCalendarMonth(-1)}
+                style={{ backgroundColor: '#F3F4F6', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 }}
+              >
+                <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#374151' }}>‹</Text>
+              </TouchableOpacity>
+
+              <Text style={{ fontSize: 16, fontWeight: '900', color: '#111827' }}>
+                {calendarViewDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+              </Text>
+
+              <TouchableOpacity
+                onPress={() => changeCalendarMonth(1)}
+                style={{ backgroundColor: '#F3F4F6', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 }}
+              >
+                <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#374151' }}>›</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Days of Week Header */}
+            <View style={{ flexDirection: 'row', marginBottom: 8 }}>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day, i) => (
+                <Text key={i} style={{ flex: 1, textAlign: 'center', fontSize: 11, fontWeight: '700', color: '#9CA3AF' }}>
+                  {day}
+                </Text>
+              ))}
+            </View>
+
+            {/* Month Grid */}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+              {generateCalendarGrid(calendarViewDate).map((cell, idx) => {
+                if (!cell) {
+                  return <View key={idx} style={{ width: '14.28%', height: 40 }} />;
+                }
+
+                const targetSelected = calendarTarget === 'start' ? startDate : endDate;
+                const isSelected = cell.dateStr === targetSelected;
+                const isToday = cell.dateStr === new Date().toISOString().split('T')[0];
+
+                return (
+                  <TouchableOpacity
+                    key={idx}
+                    onPress={() => selectCalendarDate(cell.dateStr)}
+                    style={{
+                      width: '14.28%',
+                      height: 40,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: 32,
+                        height: 32,
+                        borderRadius: 16,
+                        backgroundColor: isSelected ? '#208AEF' : isToday ? '#EFF6FF' : 'transparent',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        borderWidth: isToday && !isSelected ? 1 : 0,
+                        borderColor: '#208AEF'
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 13,
+                          fontWeight: isSelected || isToday ? 'bold' : '500',
+                          color: isSelected ? 'white' : isToday ? '#208AEF' : '#1F2937'
+                        }}
+                      >
+                        {cell.day}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Footer Close */}
+            <TouchableOpacity
+              onPress={() => setShowCalendarModal(false)}
+              style={{ backgroundColor: '#F3F4F6', borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginTop: 16 }}
+            >
+              <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#374151' }}>Cancel</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>

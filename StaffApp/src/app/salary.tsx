@@ -1,6 +1,6 @@
 // app/salary.tsx
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Modal } from 'react-native';
 import { 
   Calendar, Hourglass, Info, FileText, 
   Wallet, Gift, MinusCircle, CalendarCheck2, 
@@ -10,6 +10,15 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { doc, getDoc, collection, query, where, onSnapshot, getDocs } from 'firebase/firestore';
 import { db } from '../config/firebase';
+
+const formatLateTime = (mins: number): string => {
+  if (mins < 60) {
+    return `${mins} mins`;
+  }
+  const hrs = Math.floor(mins / 60);
+  const remainingMins = mins % 60;
+  return remainingMins > 0 ? `${hrs}h ${remainingMins}m` : `${hrs}h`;
+};
 
 // Module-level global memory cache to guarantee zero reload/skeleton when navigating between tabs
 let globalSalaryCache: {
@@ -26,6 +35,7 @@ let globalSalaryCache: {
     daysAbsent: number;
     onLeave: number;
     expectedSalary: number;
+    isMature: boolean;
   };
   historyData: any[];
   rawAttendance: any[];
@@ -43,7 +53,8 @@ let globalSalaryCache: {
     daysLate: 0,
     daysAbsent: 0,
     onLeave: 0,
-    expectedSalary: 0
+    expectedSalary: 0,
+    isMature: false
   },
   historyData: [],
   rawAttendance: [],
@@ -57,6 +68,12 @@ export default function SalaryScreen() {
   const [historyData, setHistoryData] = useState<any[]>(globalSalaryCache.historyData);
   const [rawAttendance, setRawAttendance] = useState<any[]>(globalSalaryCache.rawAttendance);
   const [leaveList, setLeaveList] = useState<any[]>(globalSalaryCache.leaveList);
+  const [staffData, setStaffData] = useState<any>(null);
+  const [showLateModal, setShowLateModal] = useState(false);
+  const [activeModalTab, setActiveModalTab] = useState<'all' | 'late' | 'absent'>('all');
+  const [lateHistory, setLateHistory] = useState<any[]>([]);
+  const [absentHistory, setAbsentHistory] = useState<any[]>([]);
+  const [cycleMonthName, setCycleMonthName] = useState('');
   const [isAttLoaded, setIsAttLoaded] = useState(globalSalaryCache.isLoaded);
   const [isLeavesLoaded, setIsLeavesLoaded] = useState(globalSalaryCache.isLoaded);
 
@@ -66,6 +83,7 @@ export default function SalaryScreen() {
   useEffect(() => {
     let unsubAtt: any;
     let unsubLeaves: any;
+    let unsubStaff: any;
 
     const fetchSalaryInfo = async () => {
       try {
@@ -74,6 +92,14 @@ export default function SalaryScreen() {
           const parsed = JSON.parse(stored);
           setUserData(parsed);
           globalSalaryCache.userData = parsed;
+
+          // Listen to staff collection for fresh salaryAmount & nextSalaryDate
+          const staffDocRef = doc(db, 'staff', parsed.empId);
+          unsubStaff = onSnapshot(staffDocRef, (staffSnap) => {
+            if (staffSnap.exists()) {
+              setStaffData(staffSnap.data());
+            }
+          });
 
           // 1. Fetch raw attendance records
           const qAtt = query(collection(db, 'attendance'), where('staffId', '==', parsed.empId));
@@ -133,6 +159,7 @@ export default function SalaryScreen() {
     return () => {
       if (unsubAtt) unsubAtt();
       if (unsubLeaves) unsubLeaves();
+      if (unsubStaff) unsubStaff();
     };
   }, []);
 
@@ -140,13 +167,34 @@ export default function SalaryScreen() {
     if (!userData || !isAttLoaded || !isLeavesLoaded) return;
 
     const localToday = new Date();
-    const yr = localToday.getFullYear();
-    const mo = String(localToday.getMonth() + 1).padStart(2, '0');
-    const currentYearMonth = `${yr}-${mo}`;
     
-    // Fetch fresh salary properties from userData
-    const salaryAmount = Number(userData.salaryAmount || userData.baseSalary || userData.salary || 0);
-    const rawNextSalaryDate = userData.nextSalaryDate || null;
+    // Fetch fresh salary properties from staffData or userData
+    const rawNextSalaryDate = staffData?.nextSalaryDate || userData?.nextSalaryDate || null;
+    const salaryAmount = Number(staffData?.salaryAmount || userData?.salaryAmount || userData?.baseSalary || userData?.salary || 0);
+
+    // Define the cycle window
+    let cycleEnd = new Date();
+    if (rawNextSalaryDate) {
+      cycleEnd = new Date(rawNextSalaryDate);
+      cycleEnd.setHours(0,0,0,0);
+      const now = new Date(localToday);
+      now.setHours(0,0,0,0);
+      while (cycleEnd < now) {
+        cycleEnd.setMonth(cycleEnd.getMonth() + 1);
+      }
+    } else {
+      cycleEnd = new Date(localToday.getFullYear(), localToday.getMonth() + 1, 0);
+    }
+    
+    const cStart = new Date(cycleEnd);
+    cStart.setMonth(cStart.getMonth() - 1);
+    
+    let actualStart = cStart;
+    const jDate = staffData?.joinDate || userData?.joinDate;
+    if (jDate) {
+      const joinD = new Date(jDate);
+      if (joinD > cStart) actualStart = joinD;
+    }
 
     let formattedDate = 'Not Set';
     let daysRemaining = '--';
@@ -167,30 +215,26 @@ export default function SalaryScreen() {
       }
     }
 
-    // We want to generate a record for each day of the current month
-    const daysInMonth = new Date(yr, localToday.getMonth() + 1, 0).getDate();
-    
     const combinedMap = new Map<string, any>();
-    const userWeeklyOff = userData?.weeklyOff || 'Sunday';
-    const todayStr = `${yr}-${mo}-${String(localToday.getDate()).padStart(2, '0')}`;
+    const userWeeklyOff = staffData?.weeklyOff || userData?.weeklyOff || 'Sunday';
+    const todayStr = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, '0')}-${String(localToday.getDate()).padStart(2, '0')}`;
     
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dy = String(d).padStart(2, '0');
-      const dateStr = `${currentYearMonth}-${dy}`;
+    for (let d = new Date(actualStart); d <= cycleEnd; d.setDate(d.getDate() + 1)) {
+      const dateStr = d.toISOString().split('T')[0];
       
       if (dateStr > todayStr) {
         continue;
       }
       
-      const dateObj = new Date(yr, localToday.getMonth(), d);
-      const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+      const dayName = d.toLocaleDateString('en-US', { weekday: 'long' });
       
       // 1. Check real attendance
       const realAtt = rawAttendance.find(att => att.date === dateStr);
       if (realAtt) {
         combinedMap.set(dateStr, {
           status: realAtt.status || 'Present',
-          date: dateStr
+          date: dateStr,
+          lateMinutes: realAtt.lateMinutes || 0
         });
         continue;
       }
@@ -240,17 +284,78 @@ export default function SalaryScreen() {
     
     // Calculate stats
     let pres = 0, abs = 0, lat = 0, lev = 0;
+    let totalLateMinutes = 0;
+    const lateRecordsList: any[] = [];
+    const absentRecordsList: any[] = [];
+
     combinedMap.forEach(item => {
       if (item.status === 'Present') pres++;
-      else if (item.status === 'Late') { pres++; lat++; }
-      else if (item.status === 'Absent') abs++;
+      else if (item.status === 'Late') { 
+        pres++; 
+        lat++; 
+        totalLateMinutes += (item.lateMinutes || 0);
+
+        const realAtt = rawAttendance.find(att => att.date === item.date);
+        const formatTime = (dVal: any) => {
+          if (!dVal) return '--:--';
+          try {
+            const dObj = new Date(dVal);
+            return dObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+          } catch {
+            return '--:--';
+          }
+        };
+
+        lateRecordsList.push({
+          date: item.date,
+          lateMinutes: item.lateMinutes || 0,
+          in: realAtt?.punchIn ? formatTime(realAtt.punchIn) : '--:--',
+          out: realAtt?.punchOut ? formatTime(realAtt.punchOut) : '--:--',
+          rawDate: item.date
+        });
+      }
+      else if (item.status === 'Absent') {
+        abs++;
+        absentRecordsList.push({
+          date: item.date,
+          rawDate: item.date
+        });
+      }
       else if (item.status === 'On Leave' || item.status === 'Leave') lev++;
     });
 
-    const perDay = salaryAmount > 0 ? (salaryAmount / 30) : 0;
-    const deductionDays = abs + (lat * 0.5);
-    const deductionsAmount = Math.round(deductionDays * perDay);
+    lateRecordsList.sort((a, b) => new Date(b.rawDate || 0).getTime() - new Date(a.rawDate || 0).getTime());
+    absentRecordsList.sort((a, b) => new Date(b.rawDate || 0).getTime() - new Date(a.rawDate || 0).getTime());
+    setLateHistory(lateRecordsList);
+    setAbsentHistory(absentRecordsList);
+    setCycleMonthName(cycleEnd.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }));
+
+    // Total working days in cycle
+    let totalWorkingDays = 0;
+    for (let d = new Date(actualStart); d <= cycleEnd; d.setDate(d.getDate() + 1)) {
+       totalWorkingDays++;
+    }
+    
+    const perDay = totalWorkingDays > 0 ? (salaryAmount / totalWorkingDays) : 0;
+    
+    // Calculate Shift Duration in minutes
+    let shiftDurationMinutes = 480; // Default 8 hours
+    const sStart = staffData?.shiftStartTime || userData?.shiftStartTime;
+    const sEnd = staffData?.shiftEndTime || userData?.shiftEndTime;
+    if (sStart && sEnd) {
+      const [startH, startM] = sStart.split(':').map(Number);
+      const [endH, endM] = sEnd.split(':').map(Number);
+      let diff = (endH * 60 + endM) - (startH * 60 + startM);
+      if (diff < 0) diff += 24 * 60; // Cross midnight
+      if (diff > 0) shiftDurationMinutes = diff;
+    }
+    
+    const perMinuteSalary = perDay / shiftDurationMinutes;
+    const deductionsAmount = Math.round((abs * perDay) + (totalLateMinutes * perMinuteSalary));
     const expected = salaryAmount > 0 ? Math.max(0, Math.round(salaryAmount - deductionsAmount)) : 0;
+
+    // Check if salary is mature (today >= rawNextSalaryDate)
+    const isMature = rawNextSalaryDate ? (new Date() >= new Date(rawNextSalaryDate)) : false;
 
     const updatedDetails = {
       baseSalary: salaryAmount,
@@ -262,20 +367,110 @@ export default function SalaryScreen() {
       daysLate: lat,
       daysAbsent: abs,
       onLeave: lev,
-      expectedSalary: expected
+      expectedSalary: expected,
+      isMature
     };
 
     setSalaryDetails(updatedDetails);
     globalSalaryCache.salaryDetails = updatedDetails;
     globalSalaryCache.isLoaded = true;
 
-  }, [rawAttendance, leaveList, userData, isAttLoaded, isLeavesLoaded]);
+  }, [rawAttendance, leaveList, userData, staffData, isAttLoaded, isLeavesLoaded]);
 
   useEffect(() => {
     if (isAttLoaded && isLeavesLoaded) {
       setIsInitialLoading(false);
     }
   }, [isAttLoaded, isLeavesLoaded]);
+
+  const getAbsentDeduction = () => {
+    if (!userData && !staffData) return 0;
+    
+    const salaryAmount = Number(staffData?.salaryAmount || userData?.salaryAmount || userData?.baseSalary || userData?.salary || 0);
+    const rawNextSalaryDate = staffData?.nextSalaryDate || userData?.nextSalaryDate || null;
+
+    let cycleEnd = new Date();
+    if (rawNextSalaryDate) {
+      cycleEnd = new Date(rawNextSalaryDate);
+      cycleEnd.setHours(0,0,0,0);
+      const now = new Date();
+      now.setHours(0,0,0,0);
+      while (cycleEnd < now) {
+        cycleEnd.setMonth(cycleEnd.getMonth() + 1);
+      }
+    } else {
+      cycleEnd = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
+    }
+    
+    const cStart = new Date(cycleEnd);
+    cStart.setMonth(cStart.getMonth() - 1);
+    
+    let actualStart = cStart;
+    const jDate = staffData?.joinDate || userData?.joinDate;
+    if (jDate) {
+      const joinD = new Date(jDate);
+      if (joinD > cStart) actualStart = joinD;
+    }
+    
+    let totalWorkingDays = 0;
+    for (let d = new Date(actualStart); d <= cycleEnd; d.setDate(d.getDate() + 1)) {
+       totalWorkingDays++;
+    }
+    
+    const perDay = totalWorkingDays > 0 ? (salaryAmount / totalWorkingDays) : 0;
+    return Math.round(perDay);
+  };
+
+  const getLateDeduction = (lateMins: number) => {
+    if (!lateMins || (!userData && !staffData)) return 0;
+    
+    const salaryAmount = Number(staffData?.salaryAmount || userData?.salaryAmount || userData?.baseSalary || userData?.salary || 0);
+    const rawNextSalaryDate = staffData?.nextSalaryDate || userData?.nextSalaryDate || null;
+
+    let cycleEnd = new Date();
+    if (rawNextSalaryDate) {
+      cycleEnd = new Date(rawNextSalaryDate);
+      cycleEnd.setHours(0,0,0,0);
+      const now = new Date();
+      now.setHours(0,0,0,0);
+      while (cycleEnd < now) {
+        cycleEnd.setMonth(cycleEnd.getMonth() + 1);
+      }
+    } else {
+      cycleEnd = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
+    }
+    
+    const cStart = new Date(cycleEnd);
+    cStart.setMonth(cStart.getMonth() - 1);
+    
+    let actualStart = cStart;
+    const jDate = staffData?.joinDate || userData?.joinDate;
+    if (jDate) {
+      const joinD = new Date(jDate);
+      if (joinD > cStart) actualStart = joinD;
+    }
+    
+    let totalWorkingDays = 0;
+    for (let d = new Date(actualStart); d <= cycleEnd; d.setDate(d.getDate() + 1)) {
+       totalWorkingDays++;
+    }
+    
+    const perDay = totalWorkingDays > 0 ? (salaryAmount / totalWorkingDays) : 0;
+    
+    let shiftDurationMinutes = 480;
+    const sStart = staffData?.shiftStartTime || userData?.shiftStartTime;
+    const sEnd = staffData?.shiftEndTime || userData?.shiftEndTime;
+    if (sStart && sEnd) {
+      const [startH, startM] = sStart.split(':').map(Number);
+      const [endH, endM] = sEnd.split(':').map(Number);
+      let diff = (endH * 60 + endM) - (startH * 60 + startM);
+      if (diff < 0) diff += 24 * 60;
+      if (diff > 0) shiftDurationMinutes = diff;
+    }
+    
+    const perMinuteSalary = perDay / shiftDurationMinutes;
+    return Math.round(lateMins * perMinuteSalary);
+  };
 
   const displayedHistory = showAllHistory ? historyData : (historyData.length > 0 ? [historyData[0]] : []);
 
@@ -325,19 +520,23 @@ export default function SalaryScreen() {
               <Text className="text-[#F59E0B] text-xs font-bold">{salaryDetails.daysRemaining}</Text>
             </View>
 
-            {/* Divider */}
-            <View className="w-[1px] h-12 bg-gray-100" />
-            
-            {/* Expected Salary */}
-            <View className="items-center flex-1">
-              <Text className="text-gray-500 text-[10px] font-medium mb-2">Expected Salary</Text>
-              <View className="w-10 h-10 bg-[#E6F4EA] rounded-full items-center justify-center mb-2">
-                <Hourglass color="#10B981" size={20} strokeWidth={2} />
-              </View>
-              <Text className="text-[#10B981] text-xs font-bold">
-                {salaryDetails.expectedSalary > 0 ? `₹ ${salaryDetails.expectedSalary.toLocaleString('en-IN')}` : '₹ 0'}
-              </Text>
-            </View>
+            {salaryDetails.isMature && (
+              <>
+                {/* Divider */}
+                <View className="w-[1px] h-12 bg-gray-100" />
+                
+                {/* Salary Generated */}
+                <View className="items-center flex-1">
+                  <Text className="text-gray-500 text-[10px] font-medium mb-2">Salary Generated</Text>
+                  <View className="w-10 h-10 bg-[#E6F4EA] rounded-full items-center justify-center mb-2">
+                    <Wallet color="#10B981" size={20} strokeWidth={2} />
+                  </View>
+                  <Text className="text-[#10B981] text-xs font-bold">
+                    {salaryDetails.expectedSalary > 0 ? `₹ ${salaryDetails.expectedSalary.toLocaleString('en-IN')}` : '₹ 0'}
+                  </Text>
+                </View>
+              </>
+            )}
           </View>
 
           {/* Info Banner */}
@@ -354,58 +553,96 @@ export default function SalaryScreen() {
         {/* 2. Salary Summary Card */}
         <View className="bg-white rounded-[20px] p-4 shadow-sm border border-gray-100">
           <View className="flex-row justify-between items-center mb-6">
-            <Text className="text-black text-[16px] font-bold">Salary Summary</Text>
-          </View>
-
-          {/* Total Earnings */}
-          <View className="items-center mb-6">
-            <Text className="text-gray-500 text-xs font-medium mb-1">Total Earnings</Text>
-            <Text className="text-[#208AEF] text-3xl font-bold tracking-tight">
-              ₹ {salaryDetails.baseSalary.toLocaleString('en-IN')}
+            <Text className="text-black text-[16px] font-bold">
+              {salaryDetails.isMature ? "Salary Summary" : "Current Cycle Deductions"}
             </Text>
           </View>
 
-          {/* Breakdowns */}
-          <View className="flex-row justify-between items-center">
-            {/* Basic Salary */}
-            <View className="w-[31%] bg-[#F0FDF4] rounded-xl p-3 items-center">
-              <View className="flex-row items-center gap-1.5 mb-2">
-                <Wallet color="#10B981" size={14} strokeWidth={2.5} />
-                <Text className="text-gray-600 text-[10px] font-medium">Basic Salary</Text>
+          {salaryDetails.isMature ? (
+            <>
+              {/* Total Earnings */}
+              <View className="items-center mb-6">
+                <Text className="text-gray-500 text-xs font-medium mb-1">Total Net Earnings (After Deductions)</Text>
+                <Text className="text-[#10B981] text-3xl font-bold tracking-tight">
+                  ₹ {salaryDetails.expectedSalary.toLocaleString('en-IN')}
+                </Text>
               </View>
-              <Text className="text-black text-xs font-bold">
-                ₹ {salaryDetails.baseSalary.toLocaleString('en-IN')}
-              </Text>
-            </View>
-            
-            {/* Allowances */}
-            <View className="w-[31%] bg-[#EFF6FF] rounded-xl p-3 items-center">
-              <View className="flex-row items-center gap-1.5 mb-2">
-                <Gift color="#3B82F6" size={14} strokeWidth={2.5} />
-                <Text className="text-gray-600 text-[10px] font-medium">Allowances</Text>
-              </View>
-              <Text className="text-black text-xs font-bold">₹ 0</Text>
-            </View>
 
-            {/* Deductions */}
-            <View className="w-[31%] bg-[#FFF1F2] rounded-xl p-3 items-center">
-              <View className="flex-row items-center gap-1.5 mb-2">
-                <MinusCircle color="#EF4444" size={14} strokeWidth={2.5} />
-                <Text className="text-gray-600 text-[10px] font-medium">Deductions</Text>
-              </View>
-              <Text className="text-[#EF4444] text-xs font-bold">
-                - ₹ {salaryDetails.deductionsAmount.toLocaleString('en-IN')}
-              </Text>
-            </View>
-          </View>
+              {/* Breakdowns */}
+              <View className="flex-row justify-between items-center">
+                {/* Basic Salary */}
+                <View className="w-[31%] bg-[#F0FDF4] rounded-xl p-3 items-center">
+                  <View className="flex-row items-center gap-1.5 mb-2">
+                    <Wallet color="#10B981" size={14} strokeWidth={2.5} />
+                    <Text className="text-gray-600 text-[10px] font-medium">Basic Salary</Text>
+                  </View>
+                  <Text className="text-black text-xs font-bold">
+                    ₹ {salaryDetails.baseSalary.toLocaleString('en-IN')}
+                  </Text>
+                </View>
+                
+                {/* Allowances */}
+                <View className="w-[31%] bg-[#EFF6FF] rounded-xl p-3 items-center">
+                  <View className="flex-row items-center gap-1.5 mb-2">
+                    <Gift color="#3B82F6" size={14} strokeWidth={2.5} />
+                    <Text className="text-gray-600 text-[10px] font-medium">Allowances</Text>
+                  </View>
+                  <Text className="text-black text-xs font-bold">₹ 0</Text>
+                </View>
 
-          {/* Net Pay */}
-          <View className="flex-row justify-between items-center pt-4 mt-5 border-t border-gray-100">
-            <Text className="text-black text-sm font-bold">Net Pay</Text>
-            <Text className="text-[#10B981] text-lg font-bold">
-              ₹ {salaryDetails.expectedSalary.toLocaleString('en-IN')}
-            </Text>
-          </View>
+                {/* Deductions */}
+                <TouchableOpacity 
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    setActiveModalTab('all');
+                    setShowLateModal(true);
+                  }}
+                  className="w-[31%] bg-[#FFF1F2] rounded-xl p-3 items-center"
+                >
+                  <View className="flex-row items-center gap-1.5 mb-2">
+                    <MinusCircle color="#EF4444" size={14} strokeWidth={2.5} />
+                    <Text className="text-gray-600 text-[10px] font-medium">Deductions</Text>
+                  </View>
+                  <Text className="text-[#EF4444] text-xs font-bold">
+                    - ₹ {salaryDetails.deductionsAmount.toLocaleString('en-IN')}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Net Pay */}
+              <View className="flex-row justify-between items-center pt-4 mt-5 border-t border-gray-100">
+                <Text className="text-black text-sm font-bold">Salary Generated</Text>
+                <Text className="text-[#10B981] text-lg font-bold">
+                  ₹ {salaryDetails.expectedSalary.toLocaleString('en-IN')}
+                </Text>
+              </View>
+            </>
+          ) : (
+            <>
+              {/* Only show Deduction amount */}
+              <TouchableOpacity 
+                activeOpacity={0.7}
+                onPress={() => {
+                  setActiveModalTab('all');
+                  setShowLateModal(true);
+                }}
+                className="items-center mb-5"
+              >
+                <Text className="text-gray-500 text-xs font-medium mb-1">Total Deductions in Active Cycle</Text>
+                <Text className="text-[#EF4444] text-3xl font-bold tracking-tight">
+                  ₹ {salaryDetails.deductionsAmount.toLocaleString('en-IN')}
+                </Text>
+                <Text className="text-[#208AEF] text-[11px] font-semibold mt-1">Tap to view deduction breakdown</Text>
+              </TouchableOpacity>
+              
+              <View className="bg-amber-50 border border-amber-100 rounded-xl p-3 flex-row items-center gap-2">
+                <Info color="#D97706" size={16} strokeWidth={2.5} />
+                <Text className="text-gray-600 text-[11px] font-medium flex-1">
+                  Salary details and net pay will be unlocked on your salary maturity date ({salaryDetails.formattedSalaryDate}).
+                </Text>
+              </View>
+            </>
+          )}
         </View>
 
         {/* 3. Attendance & Deductions Overview */}
@@ -419,18 +656,32 @@ export default function SalaryScreen() {
               <Text className="text-black text-lg font-bold leading-tight">{salaryDetails.daysPresent}</Text>
               <Text className="text-gray-500 text-[9px] font-medium text-center">Days</Text>
             </View>
-            <View className="bg-[#FEE2E2] w-[23%] aspect-square rounded-2xl items-center justify-center p-2">
+            <TouchableOpacity 
+              activeOpacity={0.7}
+              onPress={() => {
+                setActiveModalTab('absent');
+                setShowLateModal(true);
+              }}
+              className="bg-[#FEE2E2] w-[23%] aspect-square rounded-2xl items-center justify-center p-2"
+            >
               <CalendarX2 color="#EF4444" size={24} strokeWidth={2.5} className="mb-1" />
               <Text className="text-gray-500 text-[9px] font-medium text-center">Days Absent</Text>
               <Text className="text-black text-lg font-bold leading-tight">{salaryDetails.daysAbsent}</Text>
               <Text className="text-gray-500 text-[9px] font-medium text-center">Days</Text>
-            </View>
-            <View className="bg-[#FEF3C7] w-[23%] aspect-square rounded-2xl items-center justify-center p-2">
+            </TouchableOpacity>
+            <TouchableOpacity 
+              activeOpacity={0.7}
+              onPress={() => {
+                setActiveModalTab('late');
+                setShowLateModal(true);
+              }}
+              className="bg-[#FEF3C7] w-[23%] aspect-square rounded-2xl items-center justify-center p-2"
+            >
               <Clock color="#F59E0B" size={24} strokeWidth={2.5} className="mb-1" />
               <Text className="text-gray-500 text-[9px] font-medium text-center">Days Late</Text>
               <Text className="text-black text-lg font-bold leading-tight">{salaryDetails.daysLate}</Text>
               <Text className="text-gray-500 text-[9px] font-medium text-center">Days</Text>
-            </View>
+            </TouchableOpacity>
             <View className="bg-[#EFF6FF] w-[23%] aspect-square rounded-2xl items-center justify-center p-2">
               <Plane color="#3B82F6" size={24} strokeWidth={2.5} className="mb-1" />
               <Text className="text-gray-500 text-[9px] font-medium text-center">On Leave</Text>
@@ -500,6 +751,216 @@ export default function SalaryScreen() {
         </View>
 
       </View>
+
+      {/* Deduction & Late Details Modal */}
+      <Modal
+        visible={showLateModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowLateModal(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: 'white', borderTopLeftRadius: 28, borderTopRightRadius: 28, height: '75%', padding: 20 }}>
+            {/* Header */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, borderBottomWidth: 1, borderBottomColor: '#F3F4F6', paddingBottom: 14 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View style={{ backgroundColor: '#FEF3C7', padding: 8, borderRadius: 12 }}>
+                  <MinusCircle color="#D97706" size={20} strokeWidth={2.5} />
+                </View>
+                <View>
+                  <Text style={{ fontSize: 16, fontWeight: '900', color: '#111827' }}>Deduction Details</Text>
+                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#6B7280', marginTop: 2 }}>{cycleMonthName} Cycle</Text>
+                </View>
+              </View>
+              <TouchableOpacity onPress={() => setShowLateModal(false)} style={{ backgroundColor: '#F3F4F6', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 9999 }}>
+                <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#374151' }}>Close</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Navigation Tabs */}
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
+              <TouchableOpacity
+                onPress={() => setActiveModalTab('all')}
+                style={{
+                  flex: 1,
+                  paddingVertical: 8,
+                  borderRadius: 12,
+                  backgroundColor: activeModalTab === 'all' ? '#208AEF' : '#F3F4F6',
+                  alignItems: 'center'
+                }}
+              >
+                <Text style={{ fontSize: 11, fontWeight: 'bold', color: activeModalTab === 'all' ? 'white' : '#4B5563' }}>All Deductions</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setActiveModalTab('late')}
+                style={{
+                  flex: 1,
+                  paddingVertical: 8,
+                  borderRadius: 12,
+                  backgroundColor: activeModalTab === 'late' ? '#F59E0B' : '#F3F4F6',
+                  alignItems: 'center'
+                }}
+              >
+                <Text style={{ fontSize: 11, fontWeight: 'bold', color: activeModalTab === 'late' ? 'white' : '#4B5563' }}>Late ({lateHistory.length})</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setActiveModalTab('absent')}
+                style={{
+                  flex: 1,
+                  paddingVertical: 8,
+                  borderRadius: 12,
+                  backgroundColor: activeModalTab === 'absent' ? '#EF4444' : '#F3F4F6',
+                  alignItems: 'center'
+                }}
+              >
+                <Text style={{ fontSize: 11, fontWeight: 'bold', color: activeModalTab === 'absent' ? 'white' : '#4B5563' }}>Absent ({absentHistory.length})</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* List Content */}
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+              {(() => {
+                const perDayAbs = getAbsentDeduction();
+
+                if (activeModalTab === 'all') {
+                  const hasDeductions = absentHistory.length > 0 || lateHistory.length > 0;
+                  if (!hasDeductions) {
+                    return (
+                      <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 40 }}>
+                        <Text style={{ color: '#9CA3AF', fontSize: 14, fontWeight: 'bold' }}>No deductions for this cycle!</Text>
+                      </View>
+                    );
+                  }
+
+                  return (
+                    <View style={{ gap: 12 }}>
+                      {/* Summary Banner */}
+                      <View style={{ backgroundColor: '#FFF1F2', borderRadius: 16, padding: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <View>
+                          <Text style={{ fontSize: 12, fontWeight: '700', color: '#9F1239' }}>Total Deductions</Text>
+                          <Text style={{ fontSize: 10, color: '#BE123C', marginTop: 2 }}>
+                            {absentHistory.length} Absent Days + {lateHistory.length} Late Punches
+                          </Text>
+                        </View>
+                        <Text style={{ fontSize: 18, fontWeight: '900', color: '#EF4444' }}>
+                          - ₹ {salaryDetails.deductionsAmount.toLocaleString('en-IN')}
+                        </Text>
+                      </View>
+
+                      {/* Absent Entries */}
+                      {absentHistory.map((item, idx) => {
+                        const formattedDate = item.date ? new Date(item.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : item.date;
+                        return (
+                          <View key={`abs_${idx}`} style={{ backgroundColor: '#FEF2F2', borderLeftWidth: 4, borderLeftColor: '#EF4444', borderRadius: 16, padding: 14 }}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <View>
+                                <Text style={{ fontSize: 13, fontWeight: '900', color: '#1F2937' }}>{formattedDate}</Text>
+                                <Text style={{ fontSize: 10, fontWeight: '700', color: '#EF4444', marginTop: 2 }}>Absent Day</Text>
+                              </View>
+                              <Text style={{ fontSize: 13, fontWeight: '900', color: '#EF4444' }}>
+                                - ₹{perDayAbs.toLocaleString('en-IN')}
+                              </Text>
+                            </View>
+                          </View>
+                        );
+                      })}
+
+                      {/* Late Entries */}
+                      {lateHistory.map((item, idx) => {
+                        const formattedDate = item.date ? new Date(item.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : item.date;
+                        const deduction = getLateDeduction(item.lateMinutes || 0);
+
+                        return (
+                          <View key={`late_${idx}`} style={{ backgroundColor: '#FFFDF5', borderLeftWidth: 4, borderLeftColor: '#F59E0B', borderRadius: 16, padding: 14 }}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                              <Text style={{ fontSize: 13, fontWeight: '900', color: '#1F2937' }}>{formattedDate}</Text>
+                              <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 9999 }}>
+                                <Text style={{ fontSize: 10, fontWeight: '800', color: '#D97706' }}>{formatLateTime(item.lateMinutes || 0)} late</Text>
+                              </View>
+                            </View>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <Text style={{ fontSize: 11, fontWeight: '600', color: '#6B7280' }}>In: <Text style={{ color: '#1F2937', fontWeight: 'bold' }}>{item.in}</Text></Text>
+                              <Text style={{ fontSize: 12, fontWeight: '900', color: '#EF4444' }}>
+                                Deduction: ₹{deduction.toLocaleString('en-IN')}
+                              </Text>
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  );
+                }
+
+                if (activeModalTab === 'late') {
+                  if (lateHistory.length === 0) {
+                    return (
+                      <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 40 }}>
+                        <Text style={{ color: '#9CA3AF', fontSize: 14, fontWeight: 'bold' }}>No late logs for this cycle!</Text>
+                      </View>
+                    );
+                  }
+
+                  return lateHistory.map((item, idx) => {
+                    const formattedDate = item.date ? new Date(item.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : item.date;
+                    const deduction = getLateDeduction(item.lateMinutes || 0);
+
+                    return (
+                      <View key={idx} style={{ backgroundColor: '#FFFDF5', borderLeftWidth: 4, borderLeftColor: '#F59E0B', borderRadius: 16, padding: 16, marginBottom: 12 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                          <Text style={{ fontSize: 13, fontWeight: '900', color: '#1F2937' }}>{formattedDate}</Text>
+                          <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 9999 }}>
+                            <Text style={{ fontSize: 10, fontWeight: '800', color: '#D97706' }}>{formatLateTime(item.lateMinutes || 0)} late</Text>
+                          </View>
+                        </View>
+                        
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                          <View style={{ flexDirection: 'row', gap: 12 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '600', color: '#6B7280' }}>In: <Text style={{ color: '#1F2937', fontWeight: 'bold' }}>{item.in}</Text></Text>
+                            <Text style={{ fontSize: 11, fontWeight: '600', color: '#6B7280' }}>Out: <Text style={{ color: '#1F2937', fontWeight: 'bold' }}>{item.out}</Text></Text>
+                          </View>
+                          <Text style={{ fontSize: 12, fontWeight: '900', color: '#EF4444' }}>
+                            Deduction: ₹{deduction.toLocaleString('en-IN')}
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  });
+                }
+
+                if (activeModalTab === 'absent') {
+                  if (absentHistory.length === 0) {
+                    return (
+                      <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 40 }}>
+                        <Text style={{ color: '#9CA3AF', fontSize: 14, fontWeight: 'bold' }}>No absent logs for this cycle!</Text>
+                      </View>
+                    );
+                  }
+
+                  return absentHistory.map((item, idx) => {
+                    const formattedDate = item.date ? new Date(item.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : item.date;
+
+                    return (
+                      <View key={idx} style={{ backgroundColor: '#FEF2F2', borderLeftWidth: 4, borderLeftColor: '#EF4444', borderRadius: 16, padding: 16, marginBottom: 12 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <View>
+                            <Text style={{ fontSize: 13, fontWeight: '900', color: '#1F2937' }}>{formattedDate}</Text>
+                            <Text style={{ fontSize: 10, fontWeight: '700', color: '#EF4444', marginTop: 2 }}>Full Day Absent</Text>
+                          </View>
+                          <Text style={{ fontSize: 13, fontWeight: '900', color: '#EF4444' }}>
+                            Deduction: ₹{perDayAbs.toLocaleString('en-IN')}
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  });
+                }
+
+                return null;
+              })()}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }

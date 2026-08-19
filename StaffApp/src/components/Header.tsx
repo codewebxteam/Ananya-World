@@ -1,7 +1,7 @@
 // components/Header.tsx
 import React, { useState, useEffect } from 'react';
-import { View, Text, Image, TouchableOpacity, SafeAreaView, Platform } from 'react-native';
-import { Bell, Menu, Calendar, Clock } from 'lucide-react-native';
+import { View, Text, Image, TouchableOpacity, SafeAreaView, Platform, Modal } from 'react-native';
+import { Bell, Menu, Calendar, Clock, X } from 'lucide-react-native';
 
 // Firebase integration ke liye interface banaya hai.
 // Future mein backend se data aayega toh directly isme pass kar sakte hain.
@@ -17,12 +17,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Global memory cache so Header renders instantly with zero reload when navigating between tabs
 let globalHeaderUserCache: UserData | null = null;
 
+export const clearGlobalHeaderCache = () => {
+  globalHeaderUserCache = null;
+};
+
 export default function Header({ 
   notificationCount = 3 
 }: { notificationCount?: number }) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [user, setUser] = useState<UserData | null>(globalHeaderUserCache);
   const [isInitialLoading, setIsInitialLoading] = useState(!globalHeaderUserCache);
+  const [isImageModalVisible, setIsImageModalVisible] = useState(false);
 
   useEffect(() => {
     // Fetch time
@@ -70,7 +75,7 @@ export default function Header({
           </View>
           <View className="flex-row justify-between items-end">
             <View className="flex-row items-center flex-1">
-              <View className="w-16 h-16 rounded-full bg-white/20 mr-4" />
+              <View className="w-20 h-20 rounded-full bg-white/20 mr-4" />
               <View className="gap-2">
                 <View className="bg-white/20 h-3 w-24 rounded" />
                 <View className="bg-white/20 h-5 w-32 rounded" />
@@ -109,7 +114,11 @@ export default function Header({
         <View className="flex-row justify-between items-end">
           <View className="flex-row items-center flex-1">
             {/* Profile Image */}
-            <View className="w-16 h-16 rounded-full border-2 border-white/20 overflow-hidden mr-4 bg-[#002B70] items-center justify-center">
+            <TouchableOpacity 
+              activeOpacity={0.8}
+              onPress={() => setIsImageModalVisible(true)}
+              className="w-20 h-20 rounded-full border-2 border-white/20 overflow-hidden mr-4 bg-[#002B70] items-center justify-center"
+            >
               {currentUser.profilePic ? (
                 <Image 
                   source={{ uri: currentUser.profilePic }}
@@ -117,9 +126,9 @@ export default function Header({
                   resizeMode="cover"
                 />
               ) : (
-                <Text className="text-white text-2xl font-bold">{currentUser.name.charAt(0).toUpperCase()}</Text>
+                <Text className="text-white text-3xl font-bold">{currentUser.name.charAt(0).toUpperCase()}</Text>
               )}
-            </View>
+            </TouchableOpacity>
             
             {/* User Details */}
             <View>
@@ -156,6 +165,47 @@ export default function Header({
           </View>
         </View>
       </SafeAreaView>
+
+      <Modal
+        visible={isImageModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setIsImageModalVisible(false)}
+      >
+        <TouchableOpacity 
+          activeOpacity={1} 
+          onPress={() => setIsImageModalVisible(false)} 
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center', padding: 20 }}
+        >
+          {/* Close button at the top right */}
+          <TouchableOpacity 
+            onPress={() => setIsImageModalVisible(false)} 
+            style={{ position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, right: 24, padding: 10, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 99 }}
+          >
+            <X color="white" size={24} />
+          </TouchableOpacity>
+
+          {/* Large image container */}
+          <View style={{ width: 280, height: 280, borderRadius: 140, overflow: 'hidden', backgroundColor: '#002B70', borderWidth: 4, borderColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+            {currentUser.profilePic ? (
+              <Image 
+                source={{ uri: currentUser.profilePic }}
+                style={{ width: '100%', height: '100%' }}
+                resizeMode="cover"
+              />
+            ) : (
+              <Text style={{ color: 'white', fontSize: 96, fontWeight: 'bold' }}>{currentUser.name.charAt(0).toUpperCase()}</Text>
+            )}
+          </View>
+
+          {/* User info at the bottom */}
+          <View style={{ marginTop: 24, alignItems: 'center' }}>
+            <Text style={{ color: 'white', fontSize: 24, fontWeight: 'bold' }}>{currentUser.name}</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, marginTop: 4 }}>{currentUser.role}</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, marginTop: 2 }}>Employee ID: {currentUser.employeeId}</Text>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }

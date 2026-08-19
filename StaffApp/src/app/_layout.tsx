@@ -1,6 +1,6 @@
 // app/_layout.tsx
 import React from 'react';
-import { View } from 'react-native';
+import { View, Image, ActivityIndicator } from 'react-native';
 import { Stack, usePathname, router } from 'expo-router';
 import '../global.css';
 
@@ -14,6 +14,56 @@ import { useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Animated, Text } from 'react-native';
 import { Briefcase } from 'lucide-react-native';
+
+import * as TaskManager from 'expo-task-manager';
+import * as Location from 'expo-location';
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from '../config/firebase';
+
+export const LOCATION_TASK_NAME = 'background-location-task';
+
+TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
+  if (error) {
+    console.error("Background Location Task Error:", error);
+    return;
+  }
+  if (data) {
+    const { locations } = data as { locations: Location.LocationObject[] };
+    if (locations && locations.length > 0) {
+      const location = locations[0];
+      const lat = location.coords.latitude;
+      const lng = location.coords.longitude;
+      
+      try {
+        const storedUser = await AsyncStorage.getItem('userData');
+        if (!storedUser) return;
+        const userData = JSON.parse(storedUser);
+        
+        const todayStr = new Date().toISOString().split('T')[0];
+        const attendanceId = `${userData.empId}_${todayStr}`;
+        const attRef = doc(db, 'attendance', attendanceId);
+
+        let currentAddr = 'Location Shared (BG)';
+        try {
+          const geocode = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+          if (geocode.length > 0) {
+            const addr = geocode[0];
+            currentAddr = [addr.name, addr.street, addr.city, addr.region].filter(Boolean).join(', ');
+          }
+        } catch {}
+
+        await updateDoc(attRef, {
+          currentLatitude: lat,
+          currentLongitude: lng,
+          currentLocation: currentAddr,
+          lastLocationUpdate: new Date().toISOString()
+        });
+      } catch (err) {
+        console.log("Failed to update background location:", err);
+      }
+    }
+  }
+});
 
 function InnerLayout() {
   const pathname = usePathname();
@@ -64,12 +114,28 @@ function InnerLayout() {
     const checkAuth = async () => {
       try {
         const isLoggedIn = await AsyncStorage.getItem('isLoggedIn');
-        if (isLoggedIn !== 'true' && pathname !== '/login') {
-          // If not logged in and not on login page, send to login
+        const userDataStr = await AsyncStorage.getItem('userData');
+        let status = 'Active';
+        if (userDataStr) {
+          try {
+            const userData = JSON.parse(userDataStr);
+            status = userData.status || 'Active';
+          } catch (e) {}
+        }
+
+        const authPages = ['/login', '/register'];
+        const isAuthPage = authPages.includes(pathname);
+
+        if (isLoggedIn !== 'true' && !isAuthPage) {
           router.replace('/login');
-        } else if (isLoggedIn === 'true' && pathname === '/login') {
-          // If logged in but on login page, send to home
-          router.replace('/');
+        } else if (isLoggedIn === 'true') {
+          if (status === 'Pending' && pathname !== '/pending') {
+            router.replace('/pending');
+          } else if (status === 'Inactive' && pathname !== '/inactive') {
+            router.replace('/inactive');
+          } else if (status !== 'Pending' && status !== 'Inactive' && (isAuthPage || pathname === '/pending' || pathname === '/inactive')) {
+            router.replace('/');
+          }
         }
       } catch (error) {
         console.error('Failed to load auth status', error);
@@ -87,8 +153,8 @@ function InnerLayout() {
     let backPressCount = 0;
     
     const onBackPress = () => {
-      // If we are on login screen, back should exit without asking
-      if (pathname === '/login') {
+      // If we are on auth, pending, or inactive screen, back should exit without asking
+      if (['/login', '/register', '/pending', '/inactive'].includes(pathname)) {
         BackHandler.exitApp();
         return true;
       }
@@ -195,21 +261,40 @@ function InnerLayout() {
   };
 
   // Screens that have their own custom headers
-  const hideGlobalHeader = pathname.startsWith('/account/') && pathname !== '/account/index' || pathname === '/login';
+  const hideGlobalHeader = pathname.startsWith('/account/') && pathname !== '/account/index' || ['/login', '/register', '/pending', '/chat', '/inactive'].includes(pathname);
 
   if (!isReady) {
     return (
-      <View className="flex-1 bg-[#003B95] items-center justify-center">
-        <Animated.View style={{ opacity: fadeAnim, alignItems: 'center' }}>
-          <View className="w-20 h-20 bg-white rounded-[24px] items-center justify-center shadow-lg mb-5">
-            <Briefcase color="#003B95" size={40} strokeWidth={2} />
+      <View className="flex-1 bg-[#003B95] items-center justify-center relative overflow-hidden px-4">
+        {/* Decorative Brand Accents */}
+        <View className="absolute -right-16 -bottom-16 w-80 h-80 bg-[#FFD100] rounded-tl-full opacity-90" />
+        <View className="absolute -left-10 top-12 w-44 h-44 bg-white/10 rounded-full" />
+
+        <Animated.View style={{ opacity: fadeAnim, alignItems: 'center', width: '100%', zIndex: 10 }}>
+          {/* Large Round White Circle Logo Area with reduced side white space */}
+          <View className="bg-white rounded-full p-1 mb-5 items-center justify-center shadow-2xl overflow-hidden" style={{ width: 250, height: 250 }}>
+            <Image 
+              source={require('../../assets/images/DrLogo.png')} 
+              style={{ width: '140%', height: '140%' }} 
+              resizeMode="contain" 
+            />
           </View>
-          <Text className="text-3xl font-black text-white tracking-wide mb-1">
-            Ananya World
+
+          {/* Brand Name directly below Logo */}
+          <Text className="text-3xl font-black text-white tracking-wider text-center">
+            Ananya <Text className="text-[#FFD100]">World</Text>
           </Text>
-          <Text className="text-[#FFD100] text-xs font-bold tracking-widest uppercase mt-1">
-            Staff Portal Loading...
+          <Text className="text-white/70 text-xs font-bold tracking-widest uppercase mt-1">
+            Staff Portal
           </Text>
+
+          {/* Active Loading Feedback */}
+          <View className="mt-8 items-center">
+            <ActivityIndicator size="large" color="#FFD100" />
+            <Text className="text-white/80 text-xs font-bold tracking-wide mt-2.5">
+              Loading app...
+            </Text>
+          </View>
         </Animated.View>
       </View>
     );
@@ -237,11 +322,14 @@ function InnerLayout() {
           <Stack.Screen name="account/support" />
           <Stack.Screen name="account/about" />
           <Stack.Screen name="login" />
+          <Stack.Screen name="register" />
+          <Stack.Screen name="pending" />
+          <Stack.Screen name="inactive" />
         </Stack>
       </View>
 
       {/* Global Bottom Navigation */}
-      {pathname !== '/login' && !isKeyboardOpen && (
+      {!['/login', '/register', '/pending', '/inactive'].includes(pathname) && !isKeyboardOpen && (
         <View className="absolute bottom-0 w-full bg-transparent">
           <BottomNav 
             activeTab={getActiveTab()} 

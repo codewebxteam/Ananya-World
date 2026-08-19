@@ -113,6 +113,14 @@ function App() {
     const unsubscribeStaff = onSnapshot(q, (snapshot) => {
       const staff: any[] = [];
       snapshot.forEach(doc => staff.push({ id: doc.id, ...doc.data() }));
+      
+      // Sort by createdAt descending (newest first)
+      staff.sort((a, b) => {
+        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return dateB - dateA;
+      });
+      
       setAllStaff(staff);
     });
 
@@ -176,7 +184,7 @@ function App() {
               isChatTab={true}
             />
             <div className="flex-1 min-h-0 flex flex-col">
-              <Communications />
+              <Communications branchesList={branchesList} />
             </div>
           </div>
         ) : (
@@ -201,7 +209,7 @@ function App() {
             ) : activeTab === 'staff' ? (
               <Staff staffList={filteredStaff} branchesList={branchesList} />
             ) : activeTab === 'attendance' ? (
-              <Attendance />
+              <Attendance selectedBranchId={selectedBranchId} staffList={filteredStaff} />
             ) : activeTab === 'leaves' ? (
               <Leaves />
             ) : activeTab === 'gps' ? (

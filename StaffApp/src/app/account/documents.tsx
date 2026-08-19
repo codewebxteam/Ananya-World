@@ -13,6 +13,7 @@ export default function DocumentsScreen() {
   const [aadharFront, setAadharFront] = useState<string | null>(null);
   const [aadharBack, setAadharBack] = useState<string | null>(null);
   const [panCard, setPanCard] = useState<string | null>(null);
+  const [professionalCertificate, setProfessionalCertificate] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -23,12 +24,13 @@ export default function DocumentsScreen() {
           setAadharFront(parsed.documents.aadharFront || null);
           setAadharBack(parsed.documents.aadharBack || null);
           setPanCard(parsed.documents.panCard || null);
+          setProfessionalCertificate(parsed.documents.professionalCertificate || null);
         }
       }
     });
   }, []);
 
-  const pickImage = async (docType: 'aadharFront' | 'aadharBack' | 'panCard', source: 'camera' | 'gallery') => {
+  const pickImage = async (docType: 'aadharFront' | 'aadharBack' | 'panCard' | 'professionalCertificate', source: 'camera' | 'gallery') => {
     try {
       let result;
       if (source === 'camera') {
@@ -55,7 +57,7 @@ export default function DocumentsScreen() {
     }
   };
 
-  const handleUpload = async (uri: string, docType: 'aadharFront' | 'aadharBack' | 'panCard') => {
+  const handleUpload = async (uri: string, docType: 'aadharFront' | 'aadharBack' | 'panCard' | 'professionalCertificate') => {
     setLoading(true);
     try {
       const uid = await AsyncStorage.getItem('uid');
@@ -73,6 +75,7 @@ export default function DocumentsScreen() {
       if (docType === 'aadharFront') setAadharFront(downloadURL);
       else if (docType === 'aadharBack') setAadharBack(downloadURL);
       else if (docType === 'panCard') setPanCard(downloadURL);
+      else if (docType === 'professionalCertificate') setProfessionalCertificate(downloadURL);
 
       // Update AsyncStorage
       const data = await AsyncStorage.getItem('userData');
@@ -82,7 +85,12 @@ export default function DocumentsScreen() {
         await AsyncStorage.setItem('userData', JSON.stringify(parsed));
       }
 
-      Alert.alert("Success", `${docType === 'panCard' ? 'PAN Card' : docType === 'aadharFront' ? 'Aadhaar Front' : 'Aadhaar Back'} uploaded successfully!`);
+      let displayTitle = 'Aadhaar Front';
+      if (docType === 'aadharBack') displayTitle = 'Aadhaar Back';
+      else if (docType === 'panCard') displayTitle = 'PAN Card';
+      else if (docType === 'professionalCertificate') displayTitle = 'Professional Course Certificate';
+
+      Alert.alert("Success", `${displayTitle} uploaded successfully!`);
     } catch (error: any) {
       Alert.alert("Upload Failed", error.message || "Something went wrong.");
     } finally {
@@ -90,7 +98,7 @@ export default function DocumentsScreen() {
     }
   };
 
-  const UploadCard = ({ title, imageUri, docType }: { title: string, imageUri: string | null, docType: 'aadharFront' | 'aadharBack' | 'panCard' }) => (
+  const UploadCard = ({ title, imageUri, docType }: { title: string, imageUri: string | null, docType: 'aadharFront' | 'aadharBack' | 'panCard' | 'professionalCertificate' }) => (
     <View className="bg-white p-4 mb-4 rounded-2xl shadow-sm border border-gray-100">
       <Text className="text-gray-900 text-[15px] font-bold mb-3">{title}</Text>
       
@@ -158,6 +166,7 @@ export default function DocumentsScreen() {
           <UploadCard title="Aadhaar Card (Front)" imageUri={aadharFront} docType="aadharFront" />
           <UploadCard title="Aadhaar Card (Back)" imageUri={aadharBack} docType="aadharBack" />
           <UploadCard title="PAN Card" imageUri={panCard} docType="panCard" />
+          <UploadCard title="Professional Course Certificate" imageUri={professionalCertificate} docType="professionalCertificate" />
         </View>
         
         <View className="mt-2 px-6 items-center">

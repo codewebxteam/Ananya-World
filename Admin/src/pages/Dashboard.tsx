@@ -49,7 +49,8 @@ export default function Dashboard({ staffList = [], setActiveTab }: DashboardPro
     };
   }, []);
 
-  const totalStaff = staffList.length || 0;
+  const approvedStaffList = staffList.filter(s => s.status !== 'Pending');
+  const totalStaff = approvedStaffList.length;
   const activeStaffList = staffList.filter(s => s.status === 'Active' || s.status === 'On Duty');
   const activeStaff = activeStaffList.length;
   

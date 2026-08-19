@@ -4,14 +4,14 @@ import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { useEffect } from 'react';
 
-interface EditStaffModalProps {
+interface ApproveStaffModalProps {
   isOpen: boolean;
   onClose: () => void;
   branchesList: any[];
   staffToEdit: any;
 }
 
-export default function EditStaffModal({ isOpen, onClose, branchesList, staffToEdit }: EditStaffModalProps) {
+export default function ApproveStaffModal({ isOpen, onClose, branchesList, staffToEdit }: ApproveStaffModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   
@@ -22,6 +22,7 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
     staffType: 'Field Staff',
     branchId: '',
     phone: '',
+    parentPhone: '',
     address: '',
     designation: '',
     joinDate: new Date().toISOString().split('T')[0],
@@ -42,6 +43,7 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
         staffType: staffToEdit.staffType || 'Field Staff',
         branchId: staffToEdit.branchId || '',
         phone: staffToEdit.phone || '',
+        parentPhone: staffToEdit.parentPhone || '',
         address: staffToEdit.address || '',
         designation: staffToEdit.designation || '',
         joinDate: staffToEdit.joinDate || new Date().toISOString().split('T')[0],
@@ -66,6 +68,9 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
 
     try {
       if (!staffToEdit?.id) throw new Error("Staff ID is missing");
+      if (!formData.empId.trim()) throw new Error("Employee ID is mandatory for approval.");
+      if (!formData.salaryAmount) throw new Error("Monthly Salary is mandatory for approval.");
+      if (!formData.nextSalaryDate) throw new Error("Next Salary Date is mandatory for approval.");
       
       // Update details in Firestore
       await updateDoc(doc(db, 'users', staffToEdit.id), {
@@ -75,6 +80,7 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
         branchId: formData.branchId,
         department: formData.staffType === 'Field Staff' ? 'Field Operations' : 'Office',
         phone: formData.phone,
+        parentPhone: formData.parentPhone,
         address: formData.address,
         designation: formData.designation,
         joinDate: formData.joinDate,
@@ -83,7 +89,7 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
         salaryAmount: Number(formData.salaryAmount) || 0,
         nextSalaryDate: formData.nextSalaryDate,
         weeklyOff: formData.weeklyOff,
-        status: formData.status,
+        status: 'Active', // Auto-activate upon approval
         updatedAt: serverTimestamp(),
       });
 
@@ -106,7 +112,7 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl z-10 overflow-hidden flex flex-col max-h-[90vh]">
         
         <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-          <h2 className="text-xl font-bold text-gray-800">Edit Staff Details</h2>
+          <h2 className="text-xl font-bold text-blue-800">Review & Approve Registration</h2>
           <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors">
             <X size={20} />
           </button>
@@ -119,7 +125,7 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
             </div>
           )}
 
-          <form id="edit-staff-form" onSubmit={handleSubmit} className="space-y-6">
+          <form id="approve-staff-form" onSubmit={handleSubmit} className="space-y-6">
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Name */}
@@ -200,6 +206,15 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
                 <div className="relative">
                   <Phone size={18} className="absolute left-3 top-3 text-gray-400" />
                   <input required type="text" name="phone" value={formData.phone} onChange={handleChange} className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" placeholder="+91 98765 43210" />
+                </div>
+              </div>
+
+              {/* Parent Phone */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Parent's Number</label>
+                <div className="relative">
+                  <Phone size={18} className="absolute left-3 top-3 text-gray-400" />
+                  <input required type="text" name="parentPhone" value={formData.parentPhone} onChange={handleChange} className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" placeholder="+91 98765 43210" />
                 </div>
               </div>
 
@@ -294,8 +309,8 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
           <button type="button" onClick={onClose} disabled={loading} className="px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-xl transition-colors disabled:opacity-50">
             Cancel
           </button>
-          <button type="submit" form="edit-staff-form" disabled={loading} className="px-5 py-2.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors flex items-center gap-2 disabled:opacity-70">
-            {loading ? <><Loader2 size={16} className="animate-spin" /> Updating...</> : 'Update Staff Details'}
+          <button type="submit" form="approve-staff-form" disabled={loading} className="px-5 py-2.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-xl transition-colors flex items-center gap-2 disabled:opacity-70">
+            {loading ? <><Loader2 size={16} className="animate-spin" /> Approving...</> : 'Approve & Activate Account'}
           </button>
         </div>
 

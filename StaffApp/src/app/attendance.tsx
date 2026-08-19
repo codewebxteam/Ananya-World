@@ -1,6 +1,6 @@
 // app/attendance.tsx
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Modal } from 'react-native';
 import { 
   MapPin, LogOut, LogIn, Calendar as CalendarIcon, 
   Clock, History, ChevronLeft, ChevronRight, 
@@ -9,8 +9,36 @@ import {
 } from 'lucide-react-native';
 import * as Location from 'expo-location';
 import { db } from '../config/firebase';
-import { collection, query, where, doc, getDoc, setDoc, updateDoc, onSnapshot } from 'firebase/firestore';
+import { 
+  doc, getDoc, setDoc, updateDoc, collection, 
+  query, where, onSnapshot 
+} from 'firebase/firestore';
+import { LOCATION_TASK_NAME } from './_layout';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+  const R = 6371e3; // Earth's radius in meters
+  const φ1 = (lat1 * Math.PI) / 180;
+  const φ2 = (lat2 * Math.PI) / 180;
+  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+  const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+
+  const a =
+    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c; // returns distance in meters
+};
+
+const formatLateTime = (mins: number): string => {
+  if (mins < 60) {
+    return `${mins} mins`;
+  }
+  const hrs = Math.floor(mins / 60);
+  const remainingMins = mins % 60;
+  return remainingMins > 0 ? `${hrs}h ${remainingMins}m` : `${hrs}h`;
+};
 
 // Module-level global memory cache to guarantee zero reload/skeleton when navigating between tabs
 let globalAttendanceCache: {
@@ -28,6 +56,8 @@ let globalAttendanceCache: {
   isExtraDuty: boolean;
   isCompanyHoliday: boolean;
   holidayData: any;
+  activeSwap: any | null;
+  isNearOffice: boolean;
 } = {
   isLoaded: false,
   userData: null,
@@ -42,8 +72,12 @@ let globalAttendanceCache: {
   isOffCanceled: false,
   isExtraDuty: false,
   isCompanyHoliday: false,
-  holidayData: null
+  holidayData: null,
+  activeSwap: null,
+  isNearOffice: true
 };
+
+let attendanceBranchCache: { branchId: string; latitude: number; longitude: number; radius: number } | null = null;
 
 const checkAndAutoPunchOut = async (docId: string, data: any, shiftEndTime: string) => {
   if (!data.punchIn || data.punchOut) return;
@@ -89,6 +123,7 @@ export default function AttendanceScreen() {
   const [userData, setUserData] = useState<any>(globalAttendanceCache.userData);
   const [punchInTime, setPunchInTime] = useState<Date | null>(globalAttendanceCache.punchInTime);
   const [punchOutTime, setPunchOutTime] = useState<Date | null>(globalAttendanceCache.punchOutTime);
+  const [countdownText, setCountdownText] = useState('00h 00m 00s');
   const [historyData, setHistoryData] = useState<any[]>(globalAttendanceCache.historyData);
   const [monthlyStats, setMonthlyStats] = useState(globalAttendanceCache.monthlyStats);
   
@@ -102,7 +137,7 @@ export default function AttendanceScreen() {
 
   // Role & Proximity simulation states
   const [userRole, setUserRole] = useState<'Office' | 'Field'>('Office');
-  const [isNearOffice, setIsNearOffice] = useState(true);
+  const [isNearOffice, setIsNearOffice] = useState(globalAttendanceCache.isNearOffice);
 
   // Calendar State
   const [viewMonthDate, setViewMonthDate] = useState(new Date());
@@ -122,6 +157,8 @@ export default function AttendanceScreen() {
   const [approvedLeaves, setApprovedLeaves] = useState<any[]>(globalAttendanceCache.approvedLeaves);
   const [isAttLoaded, setIsAttLoaded] = useState(globalAttendanceCache.isLoaded);
   const [isLeavesLoaded, setIsLeavesLoaded] = useState(globalAttendanceCache.isLoaded);
+  const [activeSwap, setActiveSwap] = useState<any | null>(globalAttendanceCache.activeSwap || null);
+  const [showLateModal, setShowLateModal] = useState(false);
 
   useEffect(() => {
     let unsubAtt: any;
@@ -131,6 +168,8 @@ export default function AttendanceScreen() {
     let unsubActiveLeave: any;
     let unsubExtraDuties: any;
     let unsubCompanyHoliday: any;
+    let unsubSwaps: any;
+
 
     const fetchAttendanceData = async () => {
       try {
@@ -271,7 +310,8 @@ export default function AttendanceScreen() {
                 in: item.punchIn ? formatTime(new Date(item.punchIn)) : '--:--',
                 out: item.punchOut ? formatTime(new Date(item.punchOut)) : '--:--',
                 total: item.hours || '00h 00m',
-                rawDate: item.date
+                rawDate: item.date,
+                lateMinutes: item.lateMinutes || 0
               });
             });
 
@@ -355,6 +395,23 @@ export default function AttendanceScreen() {
               globalAttendanceCache.holidayData = null;
             }
           });
+
+          // 8. Listener for Leave Swaps Today
+          const qSwaps = query(
+            collection(db, 'leave_swaps'),
+            where('replacementStaffId', '==', parsed.empId)
+          );
+          unsubSwaps = onSnapshot(qSwaps, (snapshot) => {
+            let activeSwapFound = null;
+            snapshot.forEach(docSnap => {
+              const swap = docSnap.data();
+              if (swap.startDate <= today && today <= swap.endDate) {
+                activeSwapFound = { id: docSnap.id, ...swap };
+              }
+            });
+            setActiveSwap(activeSwapFound);
+            globalAttendanceCache.activeSwap = activeSwapFound;
+          });
         }
       } catch (error) {
         console.error("Error fetching attendance data", error);
@@ -378,39 +435,252 @@ export default function AttendanceScreen() {
       if (unsubActiveLeave) unsubActiveLeave();
       if (unsubExtraDuties) unsubExtraDuties();
       if (unsubCompanyHoliday) unsubCompanyHoliday();
+      if (unsubSwaps) unsubSwaps();
     };
   }, []);
+
+  // Strict location range verification loop for Office staff
+  useEffect(() => {
+    let locationInterval: any;
+
+    const checkLocationRange = async () => {
+      if (userRole !== 'Office') {
+        setIsNearOffice(true);
+        globalAttendanceCache.isNearOffice = true;
+        return;
+      }
+
+      const targetBranchId = activeSwap ? activeSwap.originalBranchId : (userData?.branchId || '');
+      if (!targetBranchId) {
+        return;
+      }
+
+      try {
+        // 1. Fetch branch coordinates & radius from Firestore (with memory cache)
+        let branchLat = attendanceBranchCache?.latitude || 0;
+        let branchLng = attendanceBranchCache?.longitude || 0;
+        let branchRadius = attendanceBranchCache?.radius || 100;
+
+        if (!attendanceBranchCache || attendanceBranchCache.branchId !== targetBranchId) {
+          const branchDocRef = doc(db, 'branches', targetBranchId);
+          const branchSnap = await getDoc(branchDocRef);
+          if (branchSnap.exists()) {
+            const branchData = branchSnap.data();
+            branchLat = Number(branchData.latitude) || 0;
+            branchLng = Number(branchData.longitude) || 0;
+            branchRadius = Number(branchData.radius) || 100;
+            attendanceBranchCache = { branchId: targetBranchId, latitude: branchLat, longitude: branchLng, radius: branchRadius };
+          } else {
+            return;
+          }
+        }
+
+        // 2. Request permission
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          setIsNearOffice(false);
+          globalAttendanceCache.isNearOffice = false;
+          return;
+        }
+
+        // 3. Fast check using OS cached location (0ms response, zero flicker)
+        const lastKnown = await Location.getLastKnownPositionAsync({});
+        if (lastKnown && lastKnown.coords) {
+          const fastDist = calculateDistance(lastKnown.coords.latitude, lastKnown.coords.longitude, branchLat, branchLng);
+          const fastIsNear = fastDist <= branchRadius;
+          setIsNearOffice(fastIsNear);
+          globalAttendanceCache.isNearOffice = fastIsNear;
+        }
+
+        // 4. Background refresh with precise current position
+        const location = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+
+        const userLat = location.coords.latitude;
+        const userLng = location.coords.longitude;
+        const distance = calculateDistance(userLat, userLng, branchLat, branchLng);
+
+        const isNear = distance <= branchRadius;
+        setIsNearOffice(isNear);
+        globalAttendanceCache.isNearOffice = isNear;
+      } catch (error) {
+        console.error("Error in checkLocationRange (attendance):", error);
+      }
+    };
+
+    if (userData && userRole === 'Office') {
+      checkLocationRange();
+      // Poll every 5 seconds to keep state fresh and instant
+      locationInterval = setInterval(checkLocationRange, 5000);
+    } else if (userRole === 'Field') {
+      setIsNearOffice(true);
+      globalAttendanceCache.isNearOffice = true;
+    }
+
+    return () => {
+      if (locationInterval) clearInterval(locationInterval);
+    };
+  }, [userData, userRole, activeSwap]);
+
+  // Foreground Location Updates specifically for Field Staff to prevent signal stale warnings
+  useEffect(() => {
+    let trackingInterval: any;
+
+    const performForegroundFieldTracking = async () => {
+      if (userRole !== 'Field' || !userData || !punchInTime || punchOutTime) return;
+
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+
+        const location = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+
+        const lat = location.coords.latitude;
+        const lng = location.coords.longitude;
+
+        let currentAddr = 'Location Shared (FG)';
+        try {
+          const geocode = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+          if (geocode.length > 0) {
+            const addr = geocode[0];
+            currentAddr = [addr.name, addr.street, addr.city, addr.region].filter(Boolean).join(', ');
+          }
+        } catch {}
+
+        const todayStr = new Date().toISOString().split('T')[0];
+        const attendanceId = `${userData.empId}_${todayStr}`;
+        const attRef = doc(db, 'attendance', attendanceId);
+
+        await updateDoc(attRef, {
+          currentLatitude: lat,
+          currentLongitude: lng,
+          currentLocation: currentAddr,
+          lastLocationUpdate: new Date().toISOString()
+        });
+      } catch (err) {
+        console.log("Failed to update foreground location (attendance):", err);
+      }
+    };
+
+    if (userData && userRole === 'Field' && punchInTime && !punchOutTime) {
+      performForegroundFieldTracking();
+      // Update location every 30 seconds while app is in foreground
+      trackingInterval = setInterval(performForegroundFieldTracking, 30000);
+    }
+
+    return () => {
+      if (trackingInterval) clearInterval(trackingInterval);
+    };
+  }, [userData, userRole, punchInTime, punchOutTime]);
+
+  // Live Auto Punch Out Countdown Timer
+  useEffect(() => {
+    if (!punchInTime || punchOutTime) return;
+
+    const updateCountdown = () => {
+      const now = new Date();
+      const endTimeStr = userData?.shiftEndTime || '17:00';
+      const [hours, minutes] = endTimeStr.split(':').map(Number);
+      
+      const targetTime = new Date();
+      targetTime.setHours(hours || 17, minutes || 0, 0, 0);
+
+      const diffMs = targetTime.getTime() - now.getTime();
+      if (diffMs <= 0) {
+        setCountdownText('00h 00m 00s');
+      } else {
+        const h = Math.floor(diffMs / 3600000);
+        const m = Math.floor((diffMs % 3600000) / 60000);
+        const s = Math.floor((diffMs % 60000) / 1000);
+        
+        const pad = (num: number) => num.toString().padStart(2, '0');
+        setCountdownText(`${pad(h)}h ${pad(m)}m ${pad(s)}s`);
+      }
+    };
+
+    updateCountdown();
+    const timer = setInterval(updateCountdown, 1000);
+
+    return () => clearInterval(timer);
+  }, [punchInTime, punchOutTime, userData]);
+
+  const getLateDeduction = (lateMins: number) => {
+    if (!lateMins || !userData) return 0;
+    
+    // Cycle Date Range Calculation
+    const yr = viewMonthDate.getFullYear();
+    let cycleEnd = new Date(yr, viewMonthDate.getMonth() + 1, 0);
+    if (userData.nextSalaryDate) {
+      const tempDate = new Date(userData.nextSalaryDate);
+      const salaryDay = tempDate.getDate();
+      cycleEnd = new Date(yr, viewMonthDate.getMonth() + 1, salaryDay);
+    }
+    
+    const cStart = new Date(cycleEnd);
+    cStart.setMonth(cStart.getMonth() - 1);
+    
+    let actualStart = cStart;
+    if (userData.joinDate) {
+      const joinD = new Date(userData.joinDate);
+      if (joinD > cStart) actualStart = joinD;
+    }
+    
+    let totalWorkingDays = 0;
+    let tempDate = new Date(actualStart);
+    while (tempDate <= cycleEnd) {
+      totalWorkingDays++;
+      tempDate.setDate(tempDate.getDate() + 1);
+    }
+    
+    const salaryAmount = Number(userData.salaryAmount || userData.baseSalary || userData.salary || 0);
+    const perDay = totalWorkingDays > 0 ? (salaryAmount / totalWorkingDays) : 0;
+    const shiftDurationMinutes = 480; // 8 hours default
+    const perMinuteSalary = perDay / shiftDurationMinutes;
+    
+    return Math.round(lateMins * perMinuteSalary);
+  };
 
   useEffect(() => {
     if (!isAttLoaded || !isLeavesLoaded) return;
 
     const yr = viewMonthDate.getFullYear();
-    const mo = String(viewMonthDate.getMonth() + 1).padStart(2, '0');
-    const currentYearMonth = `${yr}-${mo}`;
     
-    // We want to generate a record for each day of the selected month
-    const daysInMonth = new Date(yr, viewMonthDate.getMonth() + 1, 0).getDate();
+    // Define the cycle window based on viewMonthDate
+    let cycleEnd = new Date(yr, viewMonthDate.getMonth() + 1, 0);
+    if (userData.nextSalaryDate) {
+      const tempDate = new Date(userData.nextSalaryDate);
+      const salaryDay = tempDate.getDate();
+      cycleEnd = new Date(yr, viewMonthDate.getMonth() + 1, salaryDay);
+    }
     
+    const cStart = new Date(cycleEnd);
+    cStart.setMonth(cStart.getMonth() - 1);
+    
+    let actualStart = cStart;
+    if (userData.joinDate) {
+      const joinD = new Date(userData.joinDate);
+      if (joinD > cStart) actualStart = joinD;
+    }
+
     const combinedMap = new Map<string, any>();
-    
-    // Get weekly off day name
     const userWeeklyOff = userData?.weeklyOff || 'Sunday';
     
     // Format today's date string in local timezone YYYY-MM-DD
     const localToday = new Date();
     const todayStr = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, '0')}-${String(localToday.getDate()).padStart(2, '0')}`;
     
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dy = String(d).padStart(2, '0');
-      const dateStr = `${currentYearMonth}-${dy}`;
+    for (let d = new Date(actualStart); d <= cycleEnd; d.setDate(d.getDate() + 1)) {
+      const dateStr = d.toISOString().split('T')[0];
       
       // We only generate records for past days or today. Future days remain empty.
       if (dateStr > todayStr) {
         continue;
       }
       
-      const dateObj = new Date(yr, viewMonthDate.getMonth(), d);
-      const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+      const dayName = d.toLocaleDateString('en-US', { weekday: 'long' });
       
       // 1. Check if we have real attendance
       const realAtt = rawAttendance.find(att => att.date === dateStr);
@@ -489,22 +759,22 @@ export default function AttendanceScreen() {
     const combinedList = Array.from(combinedMap.values());
     combinedList.sort((a, b) => new Date(b.rawDate || 0).getTime() - new Date(a.rawDate || 0).getTime());
 
-    // 3. Compute stats for the selected month (currentYearMonth)
+    // 3. Compute stats for the selected cycle
     let pres = 0, abs = 0, lat = 0, lev = 0, totalMins = 0;
     combinedList.forEach(item => {
-      if (item.rawDate && item.rawDate.startsWith(currentYearMonth)) {
         if (item.status === 'Present') pres++;
         else if (item.status === 'Late') { pres++; lat++; }
         else if (item.status === 'Absent') abs++;
-        else if (item.status === 'On Leave' || item.status === 'Leave') lev++;
+        else if (item.status === 'On Leave') lev++;
 
         if (item.total && item.total !== '00h 00m') {
-          const match = item.total.match(/(\d+)h\s*(\d+)m/);
-          if (match) {
-            totalMins += Number(match[1]) * 60 + Number(match[2]);
+          const parts = item.total.split('h ');
+          if (parts.length === 2) {
+            const h = parseInt(parts[0]) || 0;
+            const m = parseInt(parts[1].replace('m', '')) || 0;
+            totalMins += (h * 60) + m;
           }
         }
-      }
     });
 
     const statsObj = {
@@ -529,66 +799,25 @@ export default function AttendanceScreen() {
     }
   }, [isAttLoaded, isLeavesLoaded]);
 
+  // Live Auto Punch-Out Watcher
   useEffect(() => {
-    let watchSubscription: any = null;
-
-    const startTracking = async () => {
-      if (!userData || userRole !== 'Field' || !punchInTime || punchOutTime) {
-        if (watchSubscription) {
-          watchSubscription.remove();
-          watchSubscription = null;
+    if (punchInTime && !punchOutTime && userData) {
+      const shiftEndTime = userData.shiftEndTime || '18:00';
+      const [hour, minute] = shiftEndTime.split(':').map(Number);
+      const shiftEndLocal = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), hour, minute, 0, 0);
+      
+      if (currentDate >= shiftEndLocal) {
+        const localToday = new Date();
+        const todayStr = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, '0')}-${String(localToday.getDate()).padStart(2, '0')}`;
+        const todayAtt = rawAttendance.find((a: any) => a.date === todayStr);
+        if (todayAtt && !todayAtt.punchOut) {
+          checkAndAutoPunchOut(todayAtt.id, todayAtt, shiftEndTime);
         }
-        return;
       }
+    }
+  }, [currentDate, punchInTime, punchOutTime, userData, rawAttendance]);
 
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== 'granted') return;
 
-        watchSubscription = await Location.watchPositionAsync(
-          {
-            accuracy: Location.Accuracy.Balanced,
-            timeInterval: 20000, // Every 20 seconds
-            distanceInterval: 20, // Or every 20 meters change
-          },
-          async (location) => {
-            const lat = location.coords.latitude;
-            const lng = location.coords.longitude;
-
-            const todayStr = new Date().toISOString().split('T')[0];
-            const attendanceId = `${userData.empId}_${todayStr}`;
-            const attRef = doc(db, 'attendance', attendanceId);
-
-            let currentAddr = 'Location Shared';
-            try {
-              const geocode = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
-              if (geocode.length > 0) {
-                const addr = geocode[0];
-                currentAddr = [addr.name, addr.street, addr.city, addr.region].filter(Boolean).join(', ');
-              }
-            } catch {}
-
-            await updateDoc(attRef, {
-              currentLatitude: lat,
-              currentLongitude: lng,
-              currentLocation: currentAddr,
-              lastLocationUpdate: new Date().toISOString()
-            }).catch(err => console.log("Failed to update active location:", err));
-          }
-        );
-      } catch (err) {
-        console.log("Error starting location watch:", err);
-      }
-    };
-
-    startTracking();
-
-    return () => {
-      if (watchSubscription) {
-        watchSubscription.remove();
-      }
-    };
-  }, [punchInTime, punchOutTime, userRole, userData?.empId]);
 
   const handlePunch = async () => {
     if (!userData) return;
@@ -607,16 +836,41 @@ export default function AttendanceScreen() {
     try {
       let { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        if (isFieldStaff) {
-          Alert.alert("Permission Required", "Field staff must grant location permission to punch in/out.");
-          setIsFetchingLocation(false);
-          return;
-        } else {
-          setLocationAddress('Location Permission Denied');
-        }
+        Alert.alert("Permission Required", "You must grant location permission to verify your branch range.");
+        setIsFetchingLocation(false);
+        return;
       } else {
-        let location = await Location.getCurrentPositionAsync({});
+        let location = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
         coords = { latitude: location.coords.latitude, longitude: location.coords.longitude };
+
+        // Double check branch coordinates strictly at the moment of punch-in/out
+        if (!isFieldStaff) {
+          const targetBranchId = activeSwap ? activeSwap.originalBranchId : (userData?.branchId || '');
+          if (targetBranchId) {
+            const branchDocRef = doc(db, 'branches', targetBranchId);
+            const branchSnap = await getDoc(branchDocRef);
+            if (branchSnap.exists()) {
+              const branchData = branchSnap.data();
+              const branchLat = branchData.latitude;
+              const branchLng = branchData.longitude;
+              const branchRadius = branchData.radius || 100;
+
+              const distance = calculateDistance(coords.latitude, coords.longitude, branchLat, branchLng);
+              if (distance > branchRadius) {
+                setIsNearOffice(false);
+                Alert.alert(
+                  "Punch In Failed",
+                  `You are outside the office area. Current distance: ${Math.round(distance)}m (Allowed Range: ${branchRadius}m).`
+                );
+                setIsFetchingLocation(false);
+                return;
+              }
+            }
+          }
+        }
+
         let geocode = await Location.reverseGeocodeAsync({
           latitude: location.coords.latitude,
           longitude: location.coords.longitude
@@ -630,11 +884,9 @@ export default function AttendanceScreen() {
       }
     } catch (error) {
       console.log("Location error", error);
-      if (isFieldStaff) {
-        Alert.alert("Location Error", "Could not retrieve location. Please check your GPS settings.");
-        setIsFetchingLocation(false);
-        return;
-      }
+      Alert.alert("Location Error", "Could not verify your location. Please check your GPS settings.");
+      setIsFetchingLocation(false);
+      return;
     }
     
     setIsFetchingLocation(false);
@@ -656,8 +908,33 @@ export default function AttendanceScreen() {
           locationIn: fetchedAddress,
           latitudeIn: isFieldStaff && coords ? coords.latitude : null,
           longitudeIn: isFieldStaff && coords ? coords.longitude : null,
-          status: 'Present'
+          status: 'Present',
+          branchId: activeSwap ? activeSwap.originalBranchId : (userData?.branchId || '')
         });
+
+        if (isFieldStaff) {
+          try {
+            const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+            if (bgStatus === 'granted') {
+              await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+                accuracy: Location.Accuracy.Balanced,
+                timeInterval: 20000,
+                distanceInterval: 20,
+                deferredUpdatesInterval: 20000,
+                deferredUpdatesDistance: 20,
+                showsBackgroundLocationIndicator: true,
+                foregroundService: {
+                  notificationTitle: "Live Tracking Active",
+                  notificationBody: "Your location is being tracked for duty.",
+                  notificationColor: "#138A43"
+                }
+              });
+            }
+          } catch (bgErr) {
+            console.log("Failed to start background tracking", bgErr);
+          }
+        }
+
         Alert.alert("Success", `Punch In successful at ${fetchedAddress}!`);
       } catch (error: any) {
         Alert.alert("Error", error.message);
@@ -679,6 +956,15 @@ export default function AttendanceScreen() {
           longitudeOut: isFieldStaff && coords ? coords.longitude : null,
           hours: hoursStr
         });
+
+        if (isFieldStaff) {
+          try {
+            await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+          } catch (stopErr) {
+            console.log("Failed to stop background tracking", stopErr);
+          }
+        }
+
         Alert.alert("Success", "Punch Out successful!");
       } catch (error: any) {
         Alert.alert("Error", error.message);
@@ -693,7 +979,22 @@ export default function AttendanceScreen() {
 
   const getWorkingHours = () => {
     if (!punchInTime) return '00h 00m';
-    const end = punchOutTime || currentDate;
+    
+    let end = punchOutTime || currentDate;
+    
+    if (userData && !punchOutTime) {
+      const shiftEndTime = userData.shiftEndTime || '18:00';
+      const [hour, minute] = shiftEndTime.split(':').map(Number);
+      const shiftEndLocal = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), hour, minute, 0, 0);
+      
+      if (currentDate > shiftEndLocal) {
+        end = shiftEndLocal;
+        if (punchInTime > shiftEndLocal) {
+          end = new Date(punchInTime.getTime() + 60000);
+        }
+      }
+    }
+
     const diffMs = end.getTime() - punchInTime.getTime();
     const hours = Math.floor(diffMs / (1000 * 60 * 60));
     const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
@@ -752,13 +1053,13 @@ export default function AttendanceScreen() {
         disabled: true
       };
     }
-    if (isHoliday && isOffCanceled) {
+    if (isHoliday && isOffCanceled && !punchInTime && !punchOutTime) {
       return {
         bgClass: 'bg-red-50 border-red-100',
         iconBgClass: 'bg-red-500',
         icon: <CalendarIcon color="white" size={20} />,
         title: 'Weekly Off Cancelled',
-        subtitle: 'Weekly off cancelled by Admin. Please punch in.',
+        subtitle: 'Please punch in.',
         disabled: false
       };
     }
@@ -925,6 +1226,21 @@ export default function AttendanceScreen() {
             </View>
           </View>
 
+          {/* Cover/Swap Banner Card */}
+          {activeSwap && (
+            <View className="bg-blue-50 border border-blue-100 rounded-2xl p-4 flex-row items-center gap-3 mb-4">
+              <View className="w-10 h-10 rounded-full bg-blue-100 items-center justify-center">
+                <UserCheck color="#2563EB" size={20} />
+              </View>
+              <View className="flex-1">
+                <Text className="text-blue-900 font-bold text-[14px]">Cover Duty Active</Text>
+                <Text className="text-blue-700 text-[11px] mt-0.5">
+                  You are covering for <Text className="font-semibold">{activeSwap.originalStaffName}</Text> at <Text className="font-semibold">{activeSwap.originalBranchName || 'their branch'}</Text> today.
+                </Text>
+              </View>
+            </View>
+          )}
+
           {/* Banner Card */}
           <View className={`rounded-2xl p-4 flex-row justify-between items-center mb-4 border ${bannerData.bgClass}`}>
             <View className="flex-row items-center gap-3">
@@ -936,31 +1252,27 @@ export default function AttendanceScreen() {
                 <Text className="text-gray-500 text-[11px] mt-0.5">{bannerData.subtitle}</Text>
               </View>
             </View>
-            {!punchOutTime && (!bannerData.disabled || bannerData.title === 'Outside Office Area') && (
+            {punchInTime && !punchOutTime ? (
+              <View className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2 items-center justify-center min-w-[110px]">
+                <Text className="text-amber-800 text-[9px] font-black uppercase tracking-wider">Auto Out In</Text>
+                <Text className="text-amber-700 text-xs font-black mt-0.5">{countdownText}</Text>
+                <Text className="text-amber-600 text-[8px] font-bold mt-0.5 leading-none">Duty auto off</Text>
+              </View>
+            ) : !punchInTime && !bannerData.disabled && (
               <TouchableOpacity 
                 activeOpacity={0.8}
                 onPress={handlePunch}
-                disabled={isFetchingLocation || (bannerData.disabled && bannerData.title === 'Outside Office Area')}
-                className={`px-3 py-2.5 rounded-xl shadow-sm flex-row items-center gap-1 ${
-                  bannerData.disabled 
-                    ? 'bg-gray-300 shadow-none' 
-                    : punchInTime ? 'bg-red-500' : 'bg-[#138A43]'
-                }`}
+                disabled={isFetchingLocation}
+                className="px-4 py-2.5 rounded-xl shadow-sm bg-[#138A43] flex-row items-center gap-1.5"
               >
                 {isFetchingLocation ? (
                   <ActivityIndicator color="white" size="small" />
                 ) : (
                   <>
-                    <Text className={`text-sm font-bold ${bannerData.disabled ? 'text-gray-600' : 'text-white'}`}>
-                      {bannerData.disabled ? 'Outside Office' : punchInTime ? 'Punch Out' : 'Punch In'}
+                    <Text className="text-sm font-bold text-white">
+                      Punch In
                     </Text>
-                    {!bannerData.disabled && (
-                      punchInTime ? (
-                        <LogOut color="white" size={16} strokeWidth={2.5} />
-                      ) : (
-                        <LogIn color="white" size={16} strokeWidth={2.5} />
-                      )
-                    )}
+                    <LogIn color="white" size={16} strokeWidth={2.5} />
                   </>
                 )}
               </TouchableOpacity>
@@ -1120,7 +1432,7 @@ export default function AttendanceScreen() {
               </View>
               <View className="flex-row items-center gap-1">
                 <View className="w-1.5 h-1.5 bg-[#FFD100] rounded-full" />
-                <Text className="text-gray-600 text-[10px] font-medium">Half Day / Late</Text>
+                <Text className="text-gray-600 text-[10px] font-medium">Late</Text>
               </View>
               <View className="flex-row items-center gap-1">
                 <Text className="text-blue-500 text-[10px] font-bold">L</Text>
@@ -1217,10 +1529,13 @@ export default function AttendanceScreen() {
                 <Text className="text-[#EF4444] text-2xl font-black mb-1">{monthlyStats.absent}</Text>
                 <Text className="text-gray-600 text-[11px] font-medium">Days Absent</Text>
               </View>
-              <View className="w-[48%] bg-[#FEF3C7] rounded-xl p-3 items-center">
+              <TouchableOpacity 
+                onPress={() => setShowLateModal(true)}
+                className="w-[48%] bg-[#FEF3C7] rounded-xl p-3 items-center"
+              >
                 <Text className="text-[#D97706] text-2xl font-black mb-1">{monthlyStats.late}</Text>
-                <Text className="text-gray-600 text-[11px] font-medium">Half Day / Late</Text>
-              </View>
+                <Text className="text-gray-600 text-[11px] font-medium">Days Late</Text>
+              </TouchableOpacity>
               <View className="w-[48%] bg-[#EFF6FF] rounded-xl p-3 items-center">
                 <Text className="text-[#208AEF] text-2xl font-black mb-1">{monthlyStats.leave}</Text>
                 <Text className="text-gray-600 text-[11px] font-medium">On Leave</Text>
@@ -1390,6 +1705,73 @@ export default function AttendanceScreen() {
         )}
 
       </View>
+      {/* Late History Modal */}
+      <Modal
+        visible={showLateModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowLateModal(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: 'white', borderTopLeftRadius: 28, borderTopRightRadius: 28, height: '70%', padding: 24 }}>
+            {/* Header */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, borderBottomWidth: 1, borderBottomColor: '#F3F4F6', paddingBottom: 16 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View style={{ backgroundColor: '#FEF3C7', padding: 8, borderRadius: 12 }}>
+                  <Clock color="#D97706" size={20} strokeWidth={2.5} />
+                </View>
+                <View>
+                  <Text style={{ fontSize: 16, fontWeight: '900', color: '#111827' }}>Late History</Text>
+                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#6B7280', marginTop: 2 }}>{monthNameYear} Cycle</Text>
+                </View>
+              </View>
+              <TouchableOpacity onPress={() => setShowLateModal(false)} style={{ backgroundColor: '#F3F4F6', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 9999 }}>
+                <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#374151' }}>Close</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* List */}
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+              {(() => {
+                const lateRecords = historyData.filter(item => item.status === 'Late');
+                if (lateRecords.length === 0) {
+                  return (
+                    <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 40 }}>
+                      <Text style={{ color: '#9CA3AF', fontSize: 14, fontWeight: 'bold' }}>No late logs for this cycle!</Text>
+                    </View>
+                  );
+                }
+
+                return lateRecords.map((item, idx) => {
+                  const formattedDate = item.rawDate ? new Date(item.rawDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : item.date;
+                  const deduction = getLateDeduction(item.lateMinutes || 0);
+
+                  return (
+                    <View key={idx} style={{ backgroundColor: '#FFFDF5', borderLeftWidth: 4, borderLeftColor: '#F59E0B', borderRadius: 16, padding: 16, marginBottom: 12, shadowColor: '#D97706', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 1 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <Text style={{ fontSize: 13, fontWeight: '900', color: '#1F2937' }}>{formattedDate}</Text>
+                        <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 9999 }}>
+                          <Text style={{ fontSize: 10, fontWeight: '800', color: '#D97706' }}>{formatLateTime(item.lateMinutes || 0)} late</Text>
+                        </View>
+                      </View>
+                      
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                        <View style={{ flexDirection: 'row', gap: 12 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: '#6B7280' }}>In: <Text style={{ color: '#1F2937', fontWeight: 'bold' }}>{item.in}</Text></Text>
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: '#6B7280' }}>Out: <Text style={{ color: '#1F2937', fontWeight: 'bold' }}>{item.out}</Text></Text>
+                        </View>
+                        <Text style={{ fontSize: 12, fontWeight: '900', color: '#EF4444' }}>
+                          Deduction: ₹{deduction.toLocaleString('en-IN')}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                });
+              })()}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }

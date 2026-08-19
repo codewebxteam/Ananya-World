@@ -7,7 +7,12 @@ import {
 import { collection, query, onSnapshot, doc, updateDoc, where, getDocs, serverTimestamp } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
-export default function Attendance() {
+interface AttendanceProps {
+  selectedBranchId?: string;
+  staffList?: any[];
+}
+
+export default function Attendance({ selectedBranchId = 'all', staffList: propStaffList }: AttendanceProps) {
   const [attendanceData, setAttendanceData] = useState<any[]>([]);
   const [staffList, setStaffList] = useState<any[]>([]);
   const [forgivingId, setForgivingId] = useState<string | null>(null);
@@ -99,10 +104,26 @@ export default function Attendance() {
     };
   }, []);
 
-  const todayStr = new Date().toISOString().split('T')[0];
-  const todayLogs = attendanceData.filter(log => log.date === todayStr);
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedBranchId]);
 
-  const totalStaff = staffList.length;
+  const effectiveStaffList = propStaffList && propStaffList.length > 0 
+    ? (selectedBranchId !== 'all' ? propStaffList.filter(s => s.branchId === selectedBranchId) : propStaffList)
+    : (selectedBranchId !== 'all' ? staffList.filter(s => s.branchId === selectedBranchId) : staffList);
+
+  const branchEmpIds = new Set(
+    effectiveStaffList.flatMap(s => [s.empId, s.id, s.uid]).filter(Boolean)
+  );
+
+  const filteredAttendance = selectedBranchId && selectedBranchId !== 'all'
+    ? attendanceData.filter(log => branchEmpIds.has(log.staffId) || log.branchId === selectedBranchId)
+    : attendanceData;
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  const todayLogs = filteredAttendance.filter(log => log.date === todayStr);
+
+  const totalStaff = effectiveStaffList.length;
   const presentToday = todayLogs.filter(log => log.status === 'Present').length;
   const lateToday = todayLogs.filter(log => log.status === 'Late').length;
   const loggedInStaff = new Set(todayLogs.map(l => l.staffId));
@@ -128,7 +149,7 @@ export default function Attendance() {
   // Calculate Last 7 Days Trend
   const getTrendData = () => {
     const trendList: any[] = [];
-    const activeStaffCount = staffList.length;
+    const activeStaffCount = effectiveStaffList.length;
 
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
@@ -136,7 +157,7 @@ export default function Attendance() {
       const dateStr = d.toISOString().split('T')[0];
       const dayLabel = `${d.getDate()} ${d.toLocaleString('en-US', { month: 'short' })}`; // e.g. "14 Aug"
 
-      const dayLogs = attendanceData.filter(log => log.date === dateStr);
+      const dayLogs = filteredAttendance.filter(log => log.date === dateStr);
       
       const present = dayLogs.filter(log => log.status === 'Present').length;
       const late = dayLogs.filter(log => log.status === 'Late').length;
@@ -173,11 +194,11 @@ export default function Attendance() {
   const leavePath = trendData.map((d, idx) => `${getX(idx)},${getY(d.leave)}`).join(' L ');
 
   // Pagination calculations
-  const totalEntries = attendanceData.length;
+  const totalEntries = filteredAttendance.length;
   const totalPages = Math.ceil(totalEntries / itemsPerPage) || 1;
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentItems = attendanceData.slice(indexOfFirstItem, indexOfLastItem);
+  const currentItems = filteredAttendance.slice(indexOfFirstItem, indexOfLastItem);
 
   const pageNumbers = [];
   for (let i = 1; i <= totalPages; i++) {

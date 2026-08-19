@@ -18,6 +18,28 @@ html, body {
   width: 6px;
   height: 6px;
 }
+
+/* Google Map Marker Staff Name Badge */
+.map-marker-label {
+  border-radius: 6px !important;
+  padding: 3px 8px !important;
+  font-size: 11px !important;
+  font-weight: 800 !important;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.15) !important;
+  white-space: nowrap !important;
+}
+
+.map-marker-label-active {
+  background-color: #ECFDF5 !important;
+  border: 1.5px solid #10B981 !important;
+  color: #047857 !important;
+}
+
+.map-marker-label-inactive {
+  background-color: #FEF2F2 !important;
+  border: 1.5px solid #EF4444 !important;
+  color: #DC2626 !important;
+}
 ::-webkit-scrollbar-track {
   background: transparent;
 }

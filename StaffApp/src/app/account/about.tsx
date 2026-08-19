@@ -51,7 +51,7 @@ export default function AboutScreen() {
           <View className="w-24 h-24 bg-blue-50 rounded-3xl items-center justify-center mb-4 shadow-sm border border-blue-100">
             <Info color="#208AEF" size={40} strokeWidth={1.5} />
           </View>
-          <Text className="text-2xl font-black text-[#1E3A8A] tracking-wider mb-1">StaffApp</Text>
+          <Text className="text-2xl font-black text-[#1E3A8A] tracking-wider mb-1">Ananya World</Text>
           <Text className="text-gray-500 font-bold mb-4">Version 1.0.4 (Build 42)</Text>
           <View className="bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
             <Text className="text-emerald-600 text-xs font-bold">Up to date</Text>

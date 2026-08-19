@@ -19,6 +19,7 @@ export default function Salaries() {
   // Search, Filter & Pagination State
   const [searchQuery, setSearchQuery] = useState('');
   const [staffTypeFilter, setStaffTypeFilter] = useState('all');
+  const [filterMaturedOnly, setFilterMaturedOnly] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const ITEMS_PER_PAGE = 10;
   
@@ -102,7 +103,6 @@ export default function Salaries() {
             const cycleEnd = nextDate;
             const cycleStart = new Date(nextDate);
             cycleStart.setMonth(cycleStart.getMonth() - 1);
-            cycleStart.setDate(cycleStart.getDate() + 1);
 
             const qAtt = query(collection(db, 'attendance'), where('staffId', '==', staff.empId || staff.id), where('date', '>=', cycleStart.toISOString().split('T')[0]), where('date', '<=', cycleEnd.toISOString().split('T')[0]));
             const attSnap = await getDocs(qAtt);
@@ -159,8 +159,23 @@ export default function Salaries() {
                   deductionDetails.push({ date: dateStr, punchIn: punchInTime, status: attStatus || 'Absent', deduction: 1, forgiven: false });
                 }
                 else if (attStatus === 'Late' || attStatus === 'Half Day') {
-                  deductionDays += 0.5;
-                  deductionDetails.push({ date: dateStr, punchIn: punchInTime, status: attStatus, deduction: 0.5, forgiven: false });
+                  let dayFraction = 0.5;
+                  let lateMins = attRecord?.data()?.lateMinutes || 0;
+                  
+                  if (attStatus === 'Late') {
+                    let shiftDurationMinutes = 480; // Default 8 hours
+                    if (staff.shiftStartTime && staff.shiftEndTime) {
+                      const [startH, startM] = staff.shiftStartTime.split(':').map(Number);
+                      const [endH, endM] = staff.shiftEndTime.split(':').map(Number);
+                      let diff = (endH * 60 + endM) - (startH * 60 + startM);
+                      if (diff < 0) diff += 24 * 60;
+                      if (diff > 0) shiftDurationMinutes = diff;
+                    }
+                    dayFraction = lateMins > 0 ? (lateMins / shiftDurationMinutes) : 0;
+                  }
+                  
+                  deductionDays += dayFraction;
+                  deductionDetails.push({ date: dateStr, punchIn: punchInTime, status: attStatus, deduction: dayFraction, forgiven: false, lateMinutes: lateMins });
                 }
               }
             }
@@ -376,6 +391,19 @@ export default function Salaries() {
     };
   });
 
+  const now = new Date();
+  now.setHours(0,0,0,0);
+
+  const maturedPendingStaffList = staffTableData.filter(s => {
+    const nextDate = new Date(s.maturityDate);
+    nextDate.setHours(0,0,0,0);
+    const isMatured = now >= nextDate;
+    return isMatured && s.status !== 'Paid';
+  });
+
+  const totalMaturedPendingAmount = maturedPendingStaffList.reduce((sum, s) => sum + s.pending, 0);
+  const maturedPendingStaffCount = maturedPendingStaffList.length;
+
   // Search (by Name or Phone) & Filter (by Staff Type / Category)
   const filteredStaffData = staffTableData.filter(s => {
     // 1. Search Query (Name or Phone number)
@@ -395,7 +423,16 @@ export default function Salaries() {
       matchesCategory = staffType.includes(staffTypeFilter.toLowerCase());
     }
 
-    return matchesSearch && matchesCategory;
+    // 3. Matured Pending Filter
+    let matchesMatured = true;
+    if (filterMaturedOnly) {
+      const nextDate = new Date(s.maturityDate);
+      nextDate.setHours(0,0,0,0);
+      const isMatured = now >= nextDate;
+      matchesMatured = isMatured && s.status !== 'Paid';
+    }
+
+    return matchesSearch && matchesCategory && matchesMatured;
   });
 
   // Pagination Logic (10 items per page)
@@ -439,15 +476,36 @@ export default function Salaries() {
           <p className="text-gray-500 text-[11px] mt-3 ml-[64px] font-medium"><span className="text-green-500 font-bold">{paidPercentage}%</span> of Total</p>
         </div>
 
-        <div className="bg-white rounded-[20px] p-5 shadow-sm border border-gray-100 flex flex-col justify-between">
+        <div 
+          onClick={() => {
+            setFilterMaturedOnly(!filterMaturedOnly);
+            setCurrentPage(1);
+          }}
+          className={`bg-white rounded-[20px] p-5 shadow-sm border ${
+            filterMaturedOnly ? 'border-amber-500 ring-2 ring-amber-500/20' : 'border-gray-100'
+          } flex flex-col justify-between cursor-pointer hover:shadow-md transition-all duration-200`}
+        >
           <div className="flex items-start gap-4">
-            <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center text-red-500 shrink-0"><Clock4 size={24} strokeWidth={2} /></div>
+            <div className="w-12 h-12 rounded-full bg-amber-50 flex items-center justify-center text-amber-600 shrink-0">
+              <Hourglass size={24} strokeWidth={2} />
+            </div>
             <div>
-              <p className="text-gray-500 text-[11px] font-medium mb-1">Pending Amount</p>
-              <h3 className="text-xl font-bold text-gray-900 leading-tight tracking-tight">₹ {pendingAmount.toLocaleString()}</h3>
+              <p className="text-gray-500 text-[11px] font-semibold mb-1">Matured Pending Amount</p>
+              <h3 className="text-xl font-bold text-gray-900 leading-tight tracking-tight">
+                ₹ {totalMaturedPendingAmount.toLocaleString()}
+              </h3>
             </div>
           </div>
-          <p className="text-gray-500 text-[11px] mt-3 ml-[64px] font-medium"><span className="text-red-500 font-bold">{pendingPercentage}%</span> of Total</p>
+          <div className="flex justify-between items-center mt-3 ml-[64px]">
+            <p className="text-gray-500 text-[11px] font-medium">
+              {maturedPendingStaffCount} staff matured
+            </p>
+            {filterMaturedOnly && (
+              <span className="text-[9px] font-extrabold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded uppercase">
+                Active Filter
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="bg-white rounded-[20px] p-5 shadow-sm border border-gray-100 flex flex-col justify-between">
@@ -475,6 +533,15 @@ export default function Salaries() {
 
             {/* Search, Filter & Action controls */}
             <div className="flex flex-wrap items-center gap-3.5 flex-1 lg:justify-end">
+              {filterMaturedOnly && (
+                <button 
+                  onClick={() => setFilterMaturedOnly(false)}
+                  className="bg-amber-50 hover:bg-amber-100 text-amber-700 text-[10px] font-bold px-2.5 py-1.5 rounded-xl border border-amber-200 transition-colors flex items-center gap-1.5 shadow-sm shrink-0"
+                >
+                  <span>Matured Only Filter</span>
+                  <span className="font-extrabold text-xs">×</span>
+                </button>
+              )}
               {/* Search Bar (Name or Phone) */}
               <div className="relative flex-1 sm:w-60 min-w-[180px]">
                 <Search size={15} className="absolute left-3 top-2.5 text-gray-400" />
@@ -934,7 +1001,7 @@ export default function Salaries() {
                                   d.status === 'Half Day' ? 'bg-orange-100 text-orange-700' : 
                                   'bg-red-100 text-red-600'
                                 }`}>
-                                  {d.status}
+                                  {d.status} {d.status === 'Late' && d.lateMinutes ? `(${d.lateMinutes}m)` : ''}
                                 </span>
                               </td>
                               <td className="py-2.5 px-3 text-xs font-semibold text-red-500">

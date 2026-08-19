@@ -3,7 +3,7 @@ import {
   Users, MapPin, 
   Search, Filter, 
   WifiOff, Activity, LocateFixed, Plus, Minus,
-  RefreshCcw, Info, ChevronRight, X, Phone, Mail, Award, Clock
+  RefreshCcw, Info, ChevronRight, X, Phone, Mail, Award, Clock, AlertTriangle
 } from 'lucide-react';
 import { db } from '../services/firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
@@ -26,6 +26,7 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStaffDetail, setSelectedStaffDetail] = useState<any | null>(null);
   const [countdown, setCountdown] = useState(30);
+  const [previewAvatar, setPreviewAvatar] = useState<{ url: string; name: string } | null>(null);
 
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
@@ -61,7 +62,40 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
     }
   };
 
-  // Google Map Initialization
+  // Helper: Get location stale status & elapsed time since last update
+  const getLocationStaleInfo = (lastUpdateISO?: string) => {
+    if (!lastUpdateISO) {
+      return { isStale: false, diffMins: 0, timeAgoStr: '0m', warningMessage: '' };
+    }
+
+    try {
+      const diffMs = Date.now() - new Date(lastUpdateISO).getTime();
+      if (isNaN(diffMs) || diffMs <= 0) {
+        return { isStale: false, diffMins: 0, timeAgoStr: '0m', warningMessage: '' };
+      }
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMins / 60);
+      const remMins = diffMins % 60;
+
+      let timeAgoStr = `${diffMins}m`;
+      if (diffHours > 0) {
+        timeAgoStr = `${diffHours}h ${remMins}m`;
+      }
+
+      // Consider stale if location hasn't updated in 3 or more minutes
+      const isStale = diffMins >= 3;
+      const warningMessage = `Not Received Location from ${timeAgoStr}. Please inform staff to turn on internet connection or open the app & keep it in background.`;
+
+      return {
+        isStale,
+        diffMins,
+        timeAgoStr,
+        warningMessage
+      };
+    } catch {
+      return { isStale: false, diffMins: 0, timeAgoStr: '0m', warningMessage: '' };
+    }
+  };
   const initMap = () => {
     if (!mapRef.current || !window.google || !window.google.maps) return;
     
@@ -98,22 +132,36 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
 
       const position = { lat: staff.lat, lng: staff.lng };
 
+      // Custom Red Location Pin
+      const redPinIcon = {
+        path: 'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5-2.5z',
+        fillColor: '#EF4444',
+        fillOpacity: 1,
+        strokeColor: '#FFFFFF',
+        strokeWeight: 2,
+        scale: 2,
+        anchor: new window.google.maps.Point(12, 22),
+        labelOrigin: new window.google.maps.Point(12, -8)
+      };
+
+      const staleInfo = getLocationStaleInfo(staff.lastLocationUpdate);
+
       const marker = new window.google.maps.Marker({
         position,
         map: mapInstanceRef.current,
         title: staff.name,
+        icon: redPinIcon,
         label: {
-          text: staff.name.charAt(0).toUpperCase(),
-          color: 'white',
-          fontWeight: 'bold'
+          text: staleInfo.isStale ? `${staff.name} (Inactive)` : staff.name,
+          className: staleInfo.isStale ? 'map-marker-label map-marker-label-inactive' : 'map-marker-label map-marker-label-active'
         }
       });
 
       const infoWindow = new window.google.maps.InfoWindow({
         content: `
-          <div style="padding: 8px; font-family: system-ui, -apple-system, sans-serif; min-width: 180px;">
+          <div style="padding: 8px; font-family: system-ui, -apple-system, sans-serif; min-width: 210px;">
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-              <div style="width: 32px; height: 32px; border-radius: 50%; background: #F97316; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">
+              <div style="width: 32px; height: 32px; border-radius: 50%; background: ${staleInfo.isStale ? '#F59E0B' : '#EF4444'}; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">
                 ${staff.name.charAt(0).toUpperCase()}
               </div>
               <div>
@@ -122,7 +170,12 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
               </div>
             </div>
             <p style="margin: 0 0 4px; font-size: 11px; color: #334155;"><strong>Punch In:</strong> ${staff.time} (${getElapsedDuration(staff.punchInTime)})</p>
-            <p style="margin: 0; font-size: 11px; color: #64748B; max-width: 200px; line-height: 1.4;">${staff.location}</p>
+            <p style="margin: 0 0 6px; font-size: 11px; color: #64748B; max-width: 220px; line-height: 1.4;">${staff.location}</p>
+            ${staleInfo.isStale ? `
+              <div style="padding: 6px 8px; background: #FFFBEB; border: 1px solid #FCD34D; border-radius: 6px; font-size: 10px; color: #92400E; font-weight: 600; line-height: 1.3;">
+                ⚠️ Not Received Location from ${staleInfo.timeAgoStr}. Please inform staff to turn on internet connection or open the app & keep it in background.
+              </div>
+            ` : ''}
           </div>
         `
       });
@@ -130,6 +183,7 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
       marker.addListener('click', () => {
         infoWindowsRef.current.forEach(iw => iw.close());
         infoWindow.open(mapInstanceRef.current, marker);
+        setSelectedStaffDetail(staff);
       });
 
       markersRef.current.push(marker);
@@ -139,10 +193,10 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
 
     // Auto center map directly where field staff are located
     if (staffOnMap.length > 1) {
-      mapInstanceRef.current.fitBounds(bounds);
+      mapInstanceRef.current.fitBounds(bounds, 60);
     } else if (staffOnMap.length === 1) {
       mapInstanceRef.current.setCenter({ lat: staffOnMap[0].lat, lng: staffOnMap[0].lng });
-      mapInstanceRef.current.setZoom(14);
+      mapInstanceRef.current.setZoom(15);
     }
   };
 
@@ -239,6 +293,7 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
             location: data.currentLocation || data.locationIn || 'Unknown Location',
             time: formattedTime,
             punchInTime: data.punchIn,
+            lastLocationUpdate: data.lastLocationUpdate || data.punchIn || null,
             status: 'On Field',
             dot: 'bg-orange-500',
             branchId: bId,
@@ -284,7 +339,7 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
 
   const handleSelectStaff = (staff: any) => {
     if (!mapInstanceRef.current) return;
-    mapInstanceRef.current.setCenter({ lat: staff.lat, lng: staff.lng });
+    mapInstanceRef.current.panTo({ lat: staff.lat, lng: staff.lng });
     mapInstanceRef.current.setZoom(16);
 
     const idx = staffOnMap.findIndex(s => s.id === staff.id);
@@ -300,11 +355,20 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
     mapInstanceRef.current.setZoom(type === 'in' ? currentZoom + 1 : currentZoom - 1);
   };
 
-  const handleCenterOnOffice = () => {
-    if (!mapInstanceRef.current) return;
-    const defaultCenter = { lat: 28.6139, lng: 77.2090 };
-    mapInstanceRef.current.setCenter(defaultCenter);
-    mapInstanceRef.current.setZoom(12);
+  const handleAutoFixBounds = () => {
+    if (!mapInstanceRef.current || staffOnMap.length === 0) return;
+    const bounds = new window.google.maps.LatLngBounds();
+    staffOnMap.forEach(staff => {
+      if (staff.lat && staff.lng) {
+        bounds.extend({ lat: staff.lat, lng: staff.lng });
+      }
+    });
+    if (staffOnMap.length > 1) {
+      mapInstanceRef.current.fitBounds(bounds, 60);
+    } else if (staffOnMap.length === 1) {
+      mapInstanceRef.current.panTo({ lat: staffOnMap[0].lat, lng: staffOnMap[0].lng });
+      mapInstanceRef.current.setZoom(15);
+    }
   };
 
   const filteredStaff = staffOnMap.filter(staff => 
@@ -392,51 +456,86 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
             {filteredStaff.length === 0 ? (
               <div className="p-4 text-center text-gray-500 text-sm">No field staff active on map.</div>
             ) : (
-              filteredStaff.map((staff, idx) => (
-                <div 
-                  key={staff.id} 
-                  onClick={() => handleSelectStaff(staff)}
-                  className={`p-4 flex items-start gap-3 ${idx !== filteredStaff.length - 1 ? 'border-b border-gray-50' : ''} hover:bg-gray-50/50 cursor-pointer transition-colors`}
-                >
-                  <div className="flex items-center gap-2 mt-1">
-                    <div className="w-2 h-2 rounded-full bg-orange-500"></div>
-                    {staff.avatar ? (
-                      <img src={staff.avatar} alt={staff.name} className="w-10 h-10 rounded-full object-cover border border-gray-200" />
-                    ) : (
-                      <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center text-orange-600 font-bold text-sm border border-orange-200">
-                        {staff.name.charAt(0).toUpperCase()}
+              filteredStaff.map((staff, idx) => {
+                const staleInfo = getLocationStaleInfo(staff.lastLocationUpdate);
+
+                return (
+                  <div 
+                    key={staff.id} 
+                    onClick={() => handleSelectStaff(staff)}
+                    className={`p-4 flex flex-col gap-2 ${idx !== filteredStaff.length - 1 ? 'border-b border-gray-50' : ''} ${staleInfo.isStale ? 'bg-amber-50/40 hover:bg-amber-50/80' : 'hover:bg-gray-50/50'} cursor-pointer transition-colors`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="flex items-center gap-2 mt-1">
+                        <div className={`w-2 h-2 rounded-full ${staleInfo.isStale ? 'bg-amber-500 animate-ping' : 'bg-orange-500'}`}></div>
+                        {staff.avatar ? (
+                          <img 
+                            src={staff.avatar} 
+                            alt={staff.name} 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPreviewAvatar({ url: staff.avatar, name: staff.name });
+                            }}
+                            className="w-10 h-10 rounded-full object-cover border border-gray-200 cursor-pointer hover:scale-105 transition-transform duration-200" 
+                          />
+                        ) : (
+                          <div className={`w-10 h-10 rounded-full ${staleInfo.isStale ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-orange-100 text-orange-600 border-orange-200'} flex items-center justify-center font-bold text-sm border`}>
+                            {staff.name.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex justify-between items-start mb-0.5">
+                          <h4 className="text-sm font-bold text-gray-900">{staff.name}</h4>
+                          {staleInfo.isStale ? (
+                            <span className="text-amber-700 bg-amber-100 px-2 py-0.5 rounded text-[10px] font-extrabold border border-amber-200 animate-pulse">
+                              Signal Lost ({staleInfo.timeAgoStr})
+                            </span>
+                          ) : (
+                            renderStatus(staff.status)
+                          )}
+                        </div>
+                        <div className="text-[10px] text-purple-600 bg-purple-50 px-2 py-0.5 rounded font-bold border border-purple-100 inline-block mb-1">
+                          Assigned: {getBranchName(staff.branchId)}
+                        </div>
+                        <p className="text-[11px] text-gray-500 font-bold mb-1 flex items-center gap-1">
+                          <Clock size={11} className="text-gray-400" /> Duration: {getElapsedDuration(staff.punchInTime)}
+                        </p>
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center gap-1 text-gray-500 max-w-[70%]">
+                            <MapPin size={12} className="shrink-0" />
+                            <span className="text-[11px] truncate">{staff.location}</span>
+                          </div>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedStaffDetail(staff);
+                            }}
+                            className="text-[11px] text-blue-600 font-bold hover:underline"
+                          >
+                            Details
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Stale Location Warning Banner */}
+                    {staleInfo.isStale && (
+                      <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2 text-[11px] text-amber-900 font-medium leading-relaxed">
+                        <AlertTriangle size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-extrabold text-amber-800">
+                            Not Received Location from {staleInfo.timeAgoStr}.
+                          </p>
+                          <p className="text-amber-700 text-[10px] mt-0.5">
+                            Please inform staff to turn on internet connection or open the app & keep it in background.
+                          </p>
+                        </div>
                       </div>
                     )}
                   </div>
-                  <div className="flex-1">
-                    <div className="flex justify-between items-start mb-0.5">
-                      <h4 className="text-sm font-bold text-gray-900">{staff.name}</h4>
-                      {renderStatus(staff.status)}
-                    </div>
-                    <div className="text-[10px] text-purple-600 bg-purple-50 px-2 py-0.5 rounded font-bold border border-purple-100 inline-block mb-1">
-                      Assigned: {getBranchName(staff.branchId)}
-                    </div>
-                    <p className="text-[11px] text-gray-500 font-bold mb-1 flex items-center gap-1">
-                      <Clock size={11} className="text-gray-400" /> Duration: {getElapsedDuration(staff.punchInTime)}
-                    </p>
-                    <div className="flex justify-between items-center">
-                      <div className="flex items-center gap-1 text-gray-500 max-w-[70%]">
-                        <MapPin size={12} className="shrink-0" />
-                        <span className="text-[11px] truncate">{staff.location}</span>
-                      </div>
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedStaffDetail(staff);
-                        }}
-                        className="text-[11px] text-blue-600 font-bold hover:underline"
-                      >
-                        Details
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
           
@@ -452,8 +551,25 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
           {/* Real Google Map Container */}
           <div ref={mapRef} className="w-full h-full absolute inset-0" />
 
+          {/* Empty state when no field staff are active / online */}
+          {onlineFieldStaffCount === 0 && (
+            <div className="absolute inset-0 bg-slate-50 flex items-center justify-center flex-col p-6 text-center z-20">
+              <div className="w-16 h-16 rounded-2xl bg-orange-50 border border-orange-100 flex items-center justify-center text-orange-500 mb-4 shadow-sm">
+                <WifiOff size={32} strokeWidth={2} />
+              </div>
+              <h3 className="text-gray-900 font-extrabold text-lg mb-1">No Active Staff Available Right Now</h3>
+              <p className="text-gray-500 text-xs font-medium max-w-md leading-relaxed mb-5">
+                Currently, no field staff members are punched-in on duty. As soon as a field staff member punches in from their app, live GPS tracking will automatically initialize on the map.
+              </p>
+              <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-full border border-gray-200 shadow-sm text-xs font-bold text-gray-700">
+                <span className="w-2.5 h-2.5 rounded-full bg-orange-500 animate-ping" />
+                <span>Waiting for Field Staff Punch-In...</span>
+              </div>
+            </div>
+          )}
+
           {/* Fallback layout in case key is invalid or loading */}
-          {!window.google && (
+          {onlineFieldStaffCount > 0 && !window.google && (
             <div className="absolute inset-0 bg-[#F0F4F8] flex items-center justify-center flex-col p-4 text-center z-10">
               <Activity className="text-blue-500 animate-pulse mb-3" size={32} />
               <p className="text-gray-600 font-medium text-sm">Loading Live Google Map...</p>
@@ -478,13 +594,14 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
           </div>
 
           {/* Bottom Right: Custom Map Controls */}
-          <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-2">
+          <div className="absolute bottom-4 right-4 z-10 flex flex-col items-end gap-2">
             <button 
-              onClick={handleCenterOnOffice}
-              className="w-9 h-9 bg-white rounded-lg shadow-md border border-gray-200 flex items-center justify-center text-gray-600 hover:bg-gray-50"
-              title="Center on Office"
+              onClick={handleAutoFixBounds}
+              className="px-3.5 py-2 bg-white rounded-xl shadow-md border border-gray-200 flex items-center gap-2 text-blue-600 font-bold text-xs hover:bg-blue-50 transition-colors"
+              title="Fit all staff on map view"
             >
-              <LocateFixed size={18} />
+              <LocateFixed size={18} className="text-blue-500" />
+              <span>Auto Fix</span>
             </button>
             <div className="flex flex-col bg-white rounded-lg shadow-md border border-gray-200 overflow-hidden">
               <button 
@@ -554,7 +671,15 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
                       <td className="py-3 px-2">
                         <div className="flex items-center gap-2">
                           {staff.avatar ? (
-                            <img src={staff.avatar} alt={staff.name} className="w-7 h-7 rounded-full object-cover" />
+                            <img 
+                              src={staff.avatar} 
+                              alt={staff.name} 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPreviewAvatar({ url: staff.avatar, name: staff.name });
+                              }}
+                              className="w-7 h-7 rounded-full object-cover cursor-pointer hover:scale-105 transition-transform duration-200" 
+                            />
                           ) : (
                             <div className="w-7 h-7 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 font-bold text-xs border border-blue-100">
                               {staff.name.charAt(0).toUpperCase()}
@@ -640,7 +765,12 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
               
               <div className="flex items-center gap-4 mt-2">
                 {selectedStaffDetail.avatar ? (
-                  <img src={selectedStaffDetail.avatar} alt={selectedStaffDetail.name} className="w-16 h-16 rounded-full object-cover border-2 border-white/50 shadow" />
+                  <img 
+                    src={selectedStaffDetail.avatar} 
+                    alt={selectedStaffDetail.name} 
+                    onClick={() => setPreviewAvatar({ url: selectedStaffDetail.avatar, name: selectedStaffDetail.name })}
+                    className="w-16 h-16 rounded-full object-cover border-2 border-white/50 shadow cursor-pointer hover:scale-105 transition-transform duration-200" 
+                  />
                 ) : (
                   <div className="w-16 h-16 rounded-full bg-white/10 text-white flex items-center justify-center font-bold text-2xl border-2 border-white/30 shadow">
                     {selectedStaffDetail.name.charAt(0).toUpperCase()}
@@ -688,7 +818,7 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
                   <div className="flex gap-2.5 items-start">
                     <Award size={18} className="text-blue-500 shrink-0 mt-0.5" />
                     <div>
-                      <p className="text-gray-400 text-[10px] font-medium leading-none">Job Location</p>
+                      <p className="text-gray-400 text-[10px] font-medium leading-none">Assigned Branch</p>
                       <p className="text-gray-800 text-xs font-bold mt-1">{getBranchName(selectedStaffDetail.branchId)}</p>
                     </div>
                   </div>
@@ -703,6 +833,21 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
                   </div>
                 </div>
               </div>
+
+              {/* Stale Location Warning Banner in Modal */}
+              {selectedStaffDetail.lastLocationUpdate && getLocationStaleInfo(selectedStaffDetail.lastLocationUpdate).isStale && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-2.5 text-xs text-amber-900 font-medium">
+                  <AlertTriangle size={18} className="text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-extrabold text-amber-800">
+                      Not Received Location from {getLocationStaleInfo(selectedStaffDetail.lastLocationUpdate).timeAgoStr}.
+                    </p>
+                    <p className="text-amber-700 text-[11px] mt-0.5 leading-relaxed">
+                      Please inform staff to turn on internet connection or open the app and keep it in background.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Verified Location */}
               <div className="space-y-2">
@@ -739,6 +884,31 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
               >
                 Close Profile
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Large Avatar Preview Lightbox */}
+      {previewAvatar && (
+        <div 
+          onClick={() => setPreviewAvatar(null)}
+          className="fixed inset-0 bg-black/85 backdrop-blur-sm z-[200] flex flex-col items-center justify-center p-4 animate-in fade-in duration-200"
+        >
+          <div className="relative max-w-xl max-h-[85vh] overflow-hidden rounded-2xl bg-slate-950 shadow-2xl flex flex-col items-center justify-center p-1.5 border border-white/10">
+            <button 
+              onClick={() => setPreviewAvatar(null)}
+              className="absolute top-4 right-4 bg-black/60 text-white hover:bg-black/80 p-2.5 rounded-full transition-colors z-[210] shadow"
+            >
+              <X size={20} />
+            </button>
+            <img 
+              src={previewAvatar.url} 
+              alt={previewAvatar.name} 
+              className="max-w-full max-h-[75vh] object-contain rounded-xl animate-in zoom-in-95 duration-200" 
+            />
+            <div className="w-full text-center py-2 text-white font-bold text-xs bg-slate-900/60 absolute bottom-0 left-0">
+              {previewAvatar.name} - Profile Picture
             </div>
           </div>
         </div>

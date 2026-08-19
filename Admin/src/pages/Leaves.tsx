@@ -174,6 +174,12 @@ export default function Leaves() {
   const [holidayWish, setHolidayWish] = useState('');
   const [isSubmittingHoliday, setIsSubmittingHoliday] = useState(false);
 
+  // Leave swap modal state
+  const [selectedRequestForApprove, setSelectedRequestForApprove] = useState<any | null>(null);
+  const [swapReplacementStaffId, setSwapReplacementStaffId] = useState('');
+  const [isSubmittingSwapApprove, setIsSubmittingSwapApprove] = useState(false);
+  const [branchesList, setBranchesList] = useState<any[]>([]);
+
   useEffect(() => {
     // 1. Fetch Leaves list
     const unsubLeaves = onSnapshot(collection(db, 'leaves'), (snapshot) => {
@@ -225,12 +231,22 @@ export default function Leaves() {
       setCompanyHolidays(holi);
     });
 
+    // 6. Fetch Branches
+    const unsubBranches = onSnapshot(collection(db, 'branches'), (snapshot) => {
+      const branches: any[] = [];
+      snapshot.forEach(docSnap => {
+        branches.push({ id: docSnap.id, ...docSnap.data() });
+      });
+      setBranchesList(branches);
+    });
+
     return () => {
       unsubLeaves();
       unsubStaff();
       unsubCancellations();
       unsubDuties();
       unsubHolidays();
+      unsubBranches();
     };
   }, []);
 
@@ -271,14 +287,102 @@ export default function Leaves() {
     }
   };
 
-  const handleApproveLeave = async (leaveId: string) => {
+  const handleApproveLeave = (req: any) => {
+    setSelectedRequestForApprove(req);
+    setSwapReplacementStaffId('');
+  };
+
+  const handleApproveLeaveWithSwap = async (req: any, replacementId: string) => {
+    setIsSubmittingSwapApprove(true);
     try {
-      await updateDoc(doc(db, 'leaves', leaveId), {
+      // 1. Approve original leave request
+      await updateDoc(doc(db, 'leaves', req.id), {
         status: 'Approved'
       });
+
+      // 2. If swap replacement is selected, perform swap logic
+      if (replacementId) {
+        const originalStaff = staffList.find(s => s.empId === req.staffId);
+        const originalBranchId = originalStaff?.branchId || '';
+        const originalBranch = branchesList.find(b => b.id === originalBranchId);
+        const originalBranchName = originalBranch ? originalBranch.name : 'Unknown Branch';
+
+        const replacementStaff = staffList.find(s => s.empId === replacementId);
+        if (!replacementStaff) {
+          throw new Error('Replacement staff not found.');
+        }
+        const replacementBranchId = replacementStaff.branchId || '';
+        const replacementBranch = branchesList.find(b => b.id === replacementBranchId);
+        const replacementBranchName = replacementBranch ? replacementBranch.name : 'Unknown Branch';
+
+        // 2a. Add document to leave_swaps collection
+        await addDoc(collection(db, 'leave_swaps'), {
+          leaveRequestId: req.id,
+          startDate: req.startDate,
+          endDate: req.endDate,
+          originalStaffId: req.staffId,
+          originalStaffName: req.name,
+          originalBranchId: originalBranchId,
+          originalBranchName: originalBranchName,
+          replacementStaffId: replacementStaff.empId,
+          replacementStaffName: replacementStaff.name,
+          replacementBranchId: replacementBranchId,
+          replacementBranchName: replacementBranchName,
+          createdAt: new Date().toISOString()
+        });
+
+        // Generate date list
+        const getDatesInRange = (startStr: string, endStr: string) => {
+          const dates = [];
+          let current = new Date(startStr);
+          const end = new Date(endStr);
+          while (current <= end) {
+            dates.push(current.toISOString().split('T')[0]);
+            current.setDate(current.getDate() + 1);
+          }
+          return dates;
+        };
+        const dates = getDatesInRange(req.startDate, req.endDate);
+
+        // 2b. Cancel overlapping approved leaves of replacement staff
+        const overlappingLeaves = leavesList.filter(l => 
+          l.staffId === replacementStaff.empId && 
+          l.status === 'Approved' && 
+          !(l.endDate < req.startDate || l.startDate > req.endDate)
+        );
+        for (const ol of overlappingLeaves) {
+          await updateDoc(doc(db, 'leaves', ol.id), { status: 'Cancelled' });
+        }
+
+        // 2c. Cancel weekly offs of replacement staff for dates within the range
+        const getDayName = (dateStr: string) => {
+          const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+          return days[new Date(dateStr).getDay()];
+        };
+
+        for (const dStr of dates) {
+          if (getDayName(dStr) === replacementStaff.weeklyOff) {
+            const alreadyCancelled = weeklyOffCancellations.some(c => c.staffId === replacementStaff.empId && c.date === dStr);
+            if (!alreadyCancelled) {
+              await addDoc(collection(db, 'weekly_off_cancellations'), {
+                staffId: replacementStaff.empId,
+                name: replacementStaff.name,
+                date: dStr,
+                reason: `Leave Swap with ${req.name}`,
+                createdAt: new Date().toISOString()
+              });
+            }
+          }
+        }
+      }
+
       alert('Leave request approved successfully.');
+      setSelectedRequestForApprove(null);
+      setSwapReplacementStaffId('');
     } catch (err: any) {
       alert('Error: ' + err.message);
+    } finally {
+      setIsSubmittingSwapApprove(false);
     }
   };
 
@@ -494,7 +598,7 @@ export default function Leaves() {
                     </div>
                     <div className="flex gap-2 w-full sm:w-auto">
                       <button
-                        onClick={() => handleApproveLeave(req.id)}
+                        onClick={() => handleApproveLeave(req)}
                         className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl shadow-sm transition-colors"
                       >
                         <Check size={16} /> Approve
@@ -934,6 +1038,56 @@ export default function Leaves() {
                 </table>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Leave Approve Swap Modal */}
+      {selectedRequestForApprove && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md animate-in zoom-in-95 duration-200">
+            <div className="p-6">
+              <h3 className="text-xl font-bold text-gray-900 mb-2">Approve Leave Request</h3>
+              <p className="text-sm text-gray-500 mb-4">
+                Approve leave for <span className="font-semibold text-gray-900">{selectedRequestForApprove.name}</span> ({selectedRequestForApprove.startDate} to {selectedRequestForApprove.endDate}).
+              </p>
+              
+              <div className="border-t border-b border-gray-100 py-4 my-4 space-y-4">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Leave Swap / Replacement (Optional)</p>
+                <p className="text-xs text-gray-500">
+                  Select a staff member to cover for this leave. Their leave/offs on these dates will be cancelled. Their attendance will be marked on the shifted branch for these dates.
+                </p>
+                
+                <StaffSelector
+                  label="Select Replacement Staff"
+                  selectedStaffId={swapReplacementStaffId}
+                  onSelect={setSwapReplacementStaffId}
+                  staffList={staffList.filter(s => s.empId !== selectedRequestForApprove.staffId)}
+                />
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  disabled={isSubmittingSwapApprove}
+                  onClick={() => {
+                    setSelectedRequestForApprove(null);
+                    setSwapReplacementStaffId('');
+                  }}
+                  className="flex-1 px-4 py-2.5 text-sm font-semibold text-gray-700 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isSubmittingSwapApprove}
+                  onClick={() => handleApproveLeaveWithSwap(selectedRequestForApprove, swapReplacementStaffId)}
+                  className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 shadow-sm transition-colors flex items-center justify-center gap-1.5"
+                >
+                  {isSubmittingSwapApprove ? 'Approving...' : swapReplacementStaffId ? 'Approve with Swap' : 'Approve Directly'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { 
   View, Text, TextInput, TouchableOpacity, 
   KeyboardAvoidingView, Platform, Alert, 
-  ScrollView, StatusBar, SafeAreaView 
+  ScrollView, StatusBar, SafeAreaView, Image 
 } from 'react-native';
 import { Eye, EyeOff, Lock, User, Briefcase, ArrowRight } from 'lucide-react-native';
 import { router } from 'expo-router';
@@ -46,8 +46,13 @@ export default function LoginScreen() {
       await AsyncStorage.setItem('uid', user.uid);
       await AsyncStorage.setItem('userData', JSON.stringify(userData));
       
-      // Navigate to home and prevent going back to login
-      router.replace('/');
+      if (userData.status === 'Pending') {
+        router.replace('/pending');
+      } else if (userData.status === 'Inactive') {
+        router.replace('/inactive');
+      } else {
+        router.replace('/');
+      }
     } catch (error: any) {
       let errorMessage = error.message || "Invalid credentials. Please try again.";
       if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
@@ -115,14 +120,18 @@ export default function LoginScreen() {
         <View className="flex-1 px-5 pt-20">
           
           {/* Brand Header */}
-          <View className="items-center mb-8 mt-4">
-            <View className="w-20 h-20 bg-white rounded-[24px] items-center justify-center shadow-lg mb-5">
-              <Briefcase color="#003B95" size={40} strokeWidth={2} />
+          <View className="items-center mb-6 mt-2">
+            <View className="w-28 h-28 bg-white rounded-full items-center justify-center shadow-2xl mb-3 p-1">
+              <Image 
+                source={require('../../assets/images/DrLogo.png')} 
+                style={{ width: '96%', height: '96%' }} 
+                resizeMode="contain" 
+              />
             </View>
             <Text className="text-3xl font-black text-white tracking-wide mb-1">
               Ananya World
             </Text>
-            <Text className="text-white/80 text-sm font-bold tracking-widest uppercase mt-1">
+            <Text className="text-white/80 text-xs font-bold tracking-widest uppercase mt-0.5">
               Staff Portal
             </Text>
           </View>
@@ -195,6 +204,16 @@ export default function LoginScreen() {
                 {loading ? 'Signing in...' : 'Secure Login'}
               </Text>
               {!loading && <ArrowRight color="white" size={20} strokeWidth={3} />}
+            </TouchableOpacity>
+
+            {/* Register Link */}
+            <TouchableOpacity 
+              className="mt-6 self-center"
+              onPress={() => router.push('/register')}
+            >
+              <Text className="text-gray-500 font-medium text-[13px]">
+                Don't have an account? <Text className="text-[#208AEF] font-bold">Register Here</Text>
+              </Text>
             </TouchableOpacity>
           </View>
 

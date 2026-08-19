@@ -3,14 +3,15 @@ import {
   Users, MapPin, 
   ChevronDown,
   UserCheck,
-  Search, Plus, Edit, Filter, X, Briefcase, Power, CheckCircle, RefreshCw, CalendarX
+  Search, Plus, Edit, Filter, X, Briefcase, Power, CheckCircle, RefreshCw, CalendarX, Trash2
 } from 'lucide-react';
-import { updateDoc, doc } from 'firebase/firestore';
+import { updateDoc, doc, deleteDoc, writeBatch, collection, getDocs, where, query } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { db, auth } from '../services/firebase';
 import AddStaffModal from '../components/AddStaffModal';
 import StaffDetailsModal from '../components/StaffDetailsModal';
 import EditStaffModal from '../components/EditStaffModal';
+import ApproveStaffModal from '../components/ApproveStaffModal';
 import ManageExceptionsModal from '../components/ManageExceptionsModal';
 
 interface StaffProps {
@@ -22,6 +23,7 @@ export default function Staff({ staffList, branchesList }: StaffProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedStaff, setSelectedStaff] = useState<any>(null);
   const [staffToEdit, setStaffToEdit] = useState<any>(null);
+  const [staffToApprove, setStaffToApprove] = useState<any>(null);
   const [manageExceptionsStaff, setManageExceptionsStaff] = useState<any>(null);
 
   // Filter States
@@ -48,6 +50,54 @@ export default function Staff({ staffList, branchesList }: StaffProps) {
         await updateDoc(doc(db, 'users', staff.id), { status: newStatus });
       } catch (error: any) {
         alert(error.message || 'Error updating status.');
+      }
+    }
+  };
+
+  const handleDeleteStaff = async (staff: any) => {
+    if (staff.status !== 'Inactive') {
+      alert(`Cannot delete active staff. Please mark ${staff.name} as Inactive first.`);
+      return;
+    }
+
+    if (window.confirm(`Are you absolutely sure you want to permanently delete ${staff.name} (Emp ID: ${staff.empId}) along with all their attendance, leaves, and payroll records? This action cannot be undone.`)) {
+      try {
+        const batch = writeBatch(db);
+
+        // 1. Delete user doc
+        batch.delete(doc(db, 'users', staff.id));
+
+        // 2. Query and delete from other collections where staffId == empId or staffId == uid
+        const empId = staff.empId;
+        const uid = staff.id;
+
+        // Helper to query and delete documents in batch
+        const deleteByQuery = async (colName: string, fieldName: string, value: string) => {
+          if (!value) return;
+          const q = query(collection(db, colName), where(fieldName, '==', value));
+          const snap = await getDocs(q);
+          snap.forEach(docSnap => {
+            batch.delete(docSnap.ref);
+          });
+        };
+
+        // Fetch and add to batch
+        await deleteByQuery('attendance', 'staffId', empId);
+        await deleteByQuery('leaves', 'staffId', empId);
+        await deleteByQuery('payroll', 'staffId', uid);
+        await deleteByQuery('payroll', 'staffId', empId); // Safe fallback
+        await deleteByQuery('weekly_off_cancellations', 'staffId', empId);
+        await deleteByQuery('extra_duties', 'staffId', empId);
+        
+        // Also swaps
+        await deleteByQuery('leave_swaps', 'staffId', empId);
+        await deleteByQuery('leave_swaps', 'replacementStaffId', empId);
+
+        // Commit the batch
+        await batch.commit();
+        alert('Staff member and all their associated data (attendance, leaves, payroll) have been permanently deleted!');
+      } catch (error: any) {
+        alert(error.message || 'Error deleting staff data.');
       }
     }
   };
@@ -82,6 +132,13 @@ export default function Staff({ staffList, branchesList }: StaffProps) {
         return (
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gray-50 text-gray-600 text-xs font-bold border border-gray-200">
             <span className="w-2 h-2 rounded-full bg-gray-400"></span>
+            {s}
+          </span>
+        );
+      case 'Pending': 
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-orange-50 text-orange-700 text-xs font-bold border border-orange-200">
+            <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse"></span>
             {s}
           </span>
         );
@@ -134,8 +191,10 @@ export default function Staff({ staffList, branchesList }: StaffProps) {
         staff={selectedStaff} 
         onEdit={(staff) => setStaffToEdit(staff)}
         onResetPassword={(email) => handleResetPassword(email)}
+        onDelete={(staff) => handleDeleteStaff(staff)}
       />
       <EditStaffModal isOpen={!!staffToEdit} onClose={() => setStaffToEdit(null)} branchesList={branchesList} staffToEdit={staffToEdit} />
+      <ApproveStaffModal isOpen={!!staffToApprove} onClose={() => setStaffToApprove(null)} branchesList={branchesList} staffToEdit={staffToApprove} />
       {manageExceptionsStaff && <ManageExceptionsModal staff={manageExceptionsStaff} onClose={() => setManageExceptionsStaff(null)} />}
 
       {/* ----- PREMIUM STATS CARDS GRID ----- */}
@@ -275,6 +334,7 @@ export default function Staff({ staffList, branchesList }: StaffProps) {
                 <option value="All">All Statuses</option>
                 <option value="Active">Active</option>
                 <option value="Inactive">Inactive</option>
+                <option value="Pending">Pending</option>
                 <option value="On Duty">On Duty</option>
                 <option value="On Field">On Field</option>
                 <option value="On Leave">On Leave</option>
@@ -402,6 +462,20 @@ export default function Staff({ staffList, branchesList }: StaffProps) {
                           <Power size={15} strokeWidth={2.5} />
                         </button>
 
+                        {/* Approve Button (Only for Pending) */}
+                        {staff.status === 'Pending' && (
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setStaffToApprove(staff);
+                            }} 
+                            title="Approve Staff Registration"
+                            className="p-2 text-white bg-orange-500 hover:bg-orange-600 border border-orange-600 rounded-xl transition-all active:scale-[0.93] animate-pulse"
+                          >
+                            <CheckCircle size={15} strokeWidth={2.5} />
+                          </button>
+                        )}
+
                         {/* Edit Staff Button */}
                         <button 
                           onClick={(e) => {
@@ -412,6 +486,18 @@ export default function Staff({ staffList, branchesList }: StaffProps) {
                           className="p-2 text-blue-600 bg-blue-50 border border-blue-100 hover:bg-blue-100 rounded-xl transition-all active:scale-[0.93]"
                         >
                           <Edit size={15} strokeWidth={2.5} />
+                        </button>
+
+                        {/* Delete Staff Button */}
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteStaff(staff);
+                          }} 
+                          title="Delete Staff Permanently"
+                          className="p-2 text-red-600 bg-red-50 border border-red-100 hover:bg-red-100 rounded-xl transition-all active:scale-[0.93]"
+                        >
+                          <Trash2 size={15} strokeWidth={2.5} />
                         </button>
                       </div>
                     </td>

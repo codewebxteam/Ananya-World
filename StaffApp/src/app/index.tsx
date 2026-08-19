@@ -10,7 +10,7 @@ import {
   ChevronDown, IndianRupee, Calendar, Zap, Users,
   Signal, ShieldAlert, Globe, MessageSquare, Settings,
   X, Edit2, CheckCircle2, AlertCircle, Phone, User,
-  UserCheck
+  UserCheck, Megaphone
 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { db } from '../config/firebase';
@@ -18,10 +18,25 @@ import {
   doc, getDoc, setDoc, updateDoc, collection, 
   query, where, onSnapshot, addDoc 
 } from 'firebase/firestore';
+import { LOCATION_TASK_NAME } from './_layout';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 
-// Module-level global memory cache to guarantee zero reload/skeleton when navigating between tabs
+const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+  const R = 6371e3; // Earth's radius in meters
+  const φ1 = (lat1 * Math.PI) / 180;
+  const φ2 = (lat2 * Math.PI) / 180;
+  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+  const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+
+  const a =
+    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c; // returns distance in meters
+};
+
 let globalHomeCache: {
   isLoaded: boolean;
   userData: any;
@@ -38,6 +53,8 @@ let globalHomeCache: {
   isExtraDuty: boolean;
   isCompanyHoliday: boolean;
   holidayData: { name: string; wishMessage: string } | null;
+  activeSwap: any | null;
+  isNearOffice: boolean;
 } = {
   isLoaded: false,
   userData: null,
@@ -53,8 +70,12 @@ let globalHomeCache: {
   isOffCanceled: false,
   isExtraDuty: false,
   isCompanyHoliday: false,
-  holidayData: null
+  holidayData: null,
+  activeSwap: null,
+  isNearOffice: true
 };
+
+let homeBranchCache: { branchId: string; latitude: number; longitude: number; radius: number } | null = null;
 
 const checkAndAutoPunchOut = async (docId: string, data: any, shiftEndTime: string) => {
   if (!data.punchIn || data.punchOut) return;
@@ -101,6 +122,7 @@ export default function HomeScreen() {
   const [userData, setUserData] = useState<any>(globalHomeCache.userData);
   const [punchInTime, setPunchInTime] = useState<Date | null>(globalHomeCache.punchInTime);
   const [punchOutTime, setPunchOutTime] = useState<Date | null>(globalHomeCache.punchOutTime);
+  const [countdownText, setCountdownText] = useState('00h 00m 00s');
   const [monthlyAttendance, setMonthlyAttendance] = useState(globalHomeCache.monthlyAttendance);
   const [salaryData, setSalaryData] = useState<any>(globalHomeCache.salaryData);
   const [messageCount, setMessageCount] = useState<number>(globalHomeCache.messageCount);
@@ -108,6 +130,7 @@ export default function HomeScreen() {
   const [rawAttendance, setRawAttendance] = useState<any[]>(globalHomeCache.rawAttendance);
   const [isAttLoaded, setIsAttLoaded] = useState(globalHomeCache.isLoaded);
   const [isLeavesLoaded, setIsLeavesLoaded] = useState(globalHomeCache.isLoaded);
+  const [dailyBanner, setDailyBanner] = useState<{ title: string; message: string } | null>(null);
 
   // Skeleton / Initial Load state - if globalHomeCache.isLoaded is true, initialize as FALSE so skeleton NEVER shows when switching tabs!
   const [isInitialLoading, setIsInitialLoading] = useState(!globalHomeCache.isLoaded);
@@ -124,13 +147,14 @@ export default function HomeScreen() {
 
   // Role simulation states
   const [userRole, setUserRole] = useState<'Office' | 'Field'>('Office');
-  const [isNearOffice, setIsNearOffice] = useState(true);
+  const [isNearOffice, setIsNearOffice] = useState(globalHomeCache.isNearOffice);
   const [isHoliday, setIsHoliday] = useState(globalHomeCache.isHoliday);
   const [isOnLeave, setIsOnLeave] = useState(globalHomeCache.isOnLeave);
   const [isOffCanceled, setIsOffCanceled] = useState(globalHomeCache.isOffCanceled);
   const [isExtraDuty, setIsExtraDuty] = useState(globalHomeCache.isExtraDuty);
   const [isCompanyHoliday, setIsCompanyHoliday] = useState(globalHomeCache.isCompanyHoliday);
   const [holidayData, setHolidayData] = useState<{ name: string; wishMessage: string } | null>(globalHomeCache.holidayData);
+  const [activeSwap, setActiveSwap] = useState<any | null>(globalHomeCache.activeSwap || null);
 
   useEffect(() => {
     let unsubAtt: any;
@@ -141,6 +165,8 @@ export default function HomeScreen() {
     let unsubExtraDuties: any;
     let unsubCompanyHoliday: any;
     let unsubUser: any;
+    let unsubSwaps: any;
+    let unsubBanner: any;
 
     const initData = async () => {
       try {
@@ -221,37 +247,41 @@ export default function HomeScreen() {
           // 1. Fetch Today's Attendance
           const attendanceId = `${parsed.empId}_${today}`;
           const attRef = doc(db, 'attendance', attendanceId);
-          const attSnap = await getDoc(attRef);
+          try {
+            const attSnap = await getDoc(attRef);
 
-          if (attSnap.exists()) {
-            const attData = attSnap.data();
-            if (attData.punchIn) {
-              const pIn = new Date(attData.punchIn);
-              setPunchInTime(pIn);
-              globalHomeCache.punchInTime = pIn;
-              await AsyncStorage.setItem(`punchIn_${today}`, attData.punchIn);
+            if (attSnap.exists()) {
+              const attData = attSnap.data();
+              if (attData.punchIn) {
+                const pIn = new Date(attData.punchIn);
+                setPunchInTime(pIn);
+                globalHomeCache.punchInTime = pIn;
+                await AsyncStorage.setItem(`punchIn_${today}`, attData.punchIn);
+              } else {
+                setPunchInTime(null);
+                globalHomeCache.punchInTime = null;
+                await AsyncStorage.removeItem(`punchIn_${today}`);
+              }
+              if (attData.punchOut) {
+                const pOut = new Date(attData.punchOut);
+                setPunchOutTime(pOut);
+                globalHomeCache.punchOutTime = pOut;
+                await AsyncStorage.setItem(`punchOut_${today}`, attData.punchOut);
+              } else {
+                setPunchOutTime(null);
+                globalHomeCache.punchOutTime = null;
+                await AsyncStorage.removeItem(`punchOut_${today}`);
+              }
             } else {
               setPunchInTime(null);
-              globalHomeCache.punchInTime = null;
-              await AsyncStorage.removeItem(`punchIn_${today}`);
-            }
-            if (attData.punchOut) {
-              const pOut = new Date(attData.punchOut);
-              setPunchOutTime(pOut);
-              globalHomeCache.punchOutTime = pOut;
-              await AsyncStorage.setItem(`punchOut_${today}`, attData.punchOut);
-            } else {
               setPunchOutTime(null);
+              globalHomeCache.punchInTime = null;
               globalHomeCache.punchOutTime = null;
+              await AsyncStorage.removeItem(`punchIn_${today}`);
               await AsyncStorage.removeItem(`punchOut_${today}`);
             }
-          } else {
-            setPunchInTime(null);
-            setPunchOutTime(null);
-            globalHomeCache.punchInTime = null;
-            globalHomeCache.punchOutTime = null;
-            await AsyncStorage.removeItem(`punchIn_${today}`);
-            await AsyncStorage.removeItem(`punchOut_${today}`);
+          } catch (err) {
+            console.log("Offline mode or error fetching attendance doc:", err);
           }
 
           // 2. Realtime listener for Attendance Overview & Salary calculations
@@ -378,6 +408,36 @@ export default function HomeScreen() {
               globalHomeCache.holidayData = null;
             }
           });
+
+          // 10. Listener for Leave Swaps Today
+          const qSwaps = query(
+            collection(db, 'leave_swaps'),
+            where('replacementStaffId', '==', parsed.empId)
+          );
+          unsubSwaps = onSnapshot(qSwaps, (snapshot) => {
+            let activeSwapFound = null;
+            snapshot.forEach(docSnap => {
+              const swap = docSnap.data();
+              if (swap.startDate <= today && today <= swap.endDate) {
+                activeSwapFound = { id: docSnap.id, ...swap };
+              }
+            });
+            setActiveSwap(activeSwapFound);
+            globalHomeCache.activeSwap = activeSwapFound;
+          });
+
+          // 11. Realtime listener for Daily Banner
+          const docBannerRef = doc(db, 'daily_banner', 'current');
+          unsubBanner = onSnapshot(docBannerRef, (docSnap) => {
+            if (docSnap.exists()) {
+              setDailyBanner(docSnap.data() as any);
+            } else {
+              setDailyBanner({
+                title: "Daily Update",
+                message: "Welcome to Ananya World! Mark your attendance on time."
+              });
+            }
+          });
         }
       } catch (error) {
         console.error("Error initializing home screen data", error);
@@ -402,41 +462,226 @@ export default function HomeScreen() {
       if (unsubExtraDuties) unsubExtraDuties();
       if (unsubCompanyHoliday) unsubCompanyHoliday();
       if (unsubUser) unsubUser();
+      if (unsubSwaps) unsubSwaps();
+      if (unsubBanner) unsubBanner();
     };
   }, []);
+
+  // Strict location range verification loop for Office staff
+  useEffect(() => {
+    let locationInterval: any;
+
+    const checkLocationRange = async () => {
+      if (userRole !== 'Office') {
+        setIsNearOffice(true);
+        globalHomeCache.isNearOffice = true;
+        return;
+      }
+
+      const targetBranchId = activeSwap ? activeSwap.originalBranchId : (userData?.branchId || '');
+      if (!targetBranchId) {
+        return;
+      }
+
+      try {
+        // 1. Fetch branch coordinates & radius from Firestore (with memory cache)
+        let branchLat = homeBranchCache?.latitude || 0;
+        let branchLng = homeBranchCache?.longitude || 0;
+        let branchRadius = homeBranchCache?.radius || 100;
+
+        if (!homeBranchCache || homeBranchCache.branchId !== targetBranchId) {
+          const branchDocRef = doc(db, 'branches', targetBranchId);
+          const branchSnap = await getDoc(branchDocRef);
+          if (branchSnap.exists()) {
+            const branchData = branchSnap.data();
+            branchLat = Number(branchData.latitude) || 0;
+            branchLng = Number(branchData.longitude) || 0;
+            branchRadius = Number(branchData.radius) || 100;
+            homeBranchCache = { branchId: targetBranchId, latitude: branchLat, longitude: branchLng, radius: branchRadius };
+          } else {
+            return;
+          }
+        }
+
+        // 2. Request permission
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          setIsNearOffice(false);
+          globalHomeCache.isNearOffice = false;
+          return;
+        }
+
+        // 3. Fast check using OS cached location (0ms response, zero flicker)
+        const lastKnown = await Location.getLastKnownPositionAsync({});
+        if (lastKnown && lastKnown.coords) {
+          const fastDist = calculateDistance(lastKnown.coords.latitude, lastKnown.coords.longitude, branchLat, branchLng);
+          const fastIsNear = fastDist <= branchRadius;
+          setIsNearOffice(fastIsNear);
+          globalHomeCache.isNearOffice = fastIsNear;
+        }
+
+        // 4. Background refresh with precise current position
+        const location = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+
+        const userLat = location.coords.latitude;
+        const userLng = location.coords.longitude;
+        const distance = calculateDistance(userLat, userLng, branchLat, branchLng);
+
+        const isNear = distance <= branchRadius;
+        setIsNearOffice(isNear);
+        globalHomeCache.isNearOffice = isNear;
+      } catch (error) {
+        console.error("Error in checkLocationRange:", error);
+      }
+    };
+
+    if (userData && userRole === 'Office') {
+      checkLocationRange();
+      // Poll every 5 seconds to keep state fresh and instant
+      locationInterval = setInterval(checkLocationRange, 5000);
+    } else if (userRole === 'Field') {
+      setIsNearOffice(true);
+      globalHomeCache.isNearOffice = true;
+    }
+
+    return () => {
+      if (locationInterval) clearInterval(locationInterval);
+    };
+  }, [userData, userRole, activeSwap]);
+
+  // Foreground Location Updates specifically for Field Staff to prevent signal stale warnings
+  useEffect(() => {
+    let trackingInterval: any;
+
+    const performForegroundFieldTracking = async () => {
+      if (userRole !== 'Field' || !userData || !punchInTime || punchOutTime) return;
+
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+
+        const location = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+
+        const lat = location.coords.latitude;
+        const lng = location.coords.longitude;
+
+        let currentAddr = 'Location Shared (FG)';
+        try {
+          const geocode = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+          if (geocode.length > 0) {
+            const addr = geocode[0];
+            currentAddr = [addr.name, addr.street, addr.city, addr.region].filter(Boolean).join(', ');
+          }
+        } catch {}
+
+        const todayStr = new Date().toISOString().split('T')[0];
+        const attendanceId = `${userData.empId}_${todayStr}`;
+        const attRef = doc(db, 'attendance', attendanceId);
+
+        await updateDoc(attRef, {
+          currentLatitude: lat,
+          currentLongitude: lng,
+          currentLocation: currentAddr,
+          lastLocationUpdate: new Date().toISOString()
+        });
+      } catch (err) {
+        console.log("Failed to update foreground location (index):", err);
+      }
+    };
+
+    if (userData && userRole === 'Field' && punchInTime && !punchOutTime) {
+      performForegroundFieldTracking();
+      // Update location every 30 seconds while app is in foreground
+      trackingInterval = setInterval(performForegroundFieldTracking, 30000);
+    }
+
+    return () => {
+      if (trackingInterval) clearInterval(trackingInterval);
+    };
+  }, [userData, userRole, punchInTime, punchOutTime]);
+
+  // Live Auto Punch Out Countdown Timer
+  useEffect(() => {
+    if (!punchInTime || punchOutTime) return;
+
+    const updateCountdown = () => {
+      const now = new Date();
+      const endTimeStr = userData?.shiftEndTime || '17:00';
+      const [hours, minutes] = endTimeStr.split(':').map(Number);
+      
+      const targetTime = new Date();
+      targetTime.setHours(hours || 17, minutes || 0, 0, 0);
+
+      const diffMs = targetTime.getTime() - now.getTime();
+      if (diffMs <= 0) {
+        setCountdownText('00h 00m 00s');
+      } else {
+        const h = Math.floor(diffMs / 3600000);
+        const m = Math.floor((diffMs % 3600000) / 60000);
+        const s = Math.floor((diffMs % 60000) / 1000);
+        
+        const pad = (num: number) => num.toString().padStart(2, '0');
+        setCountdownText(`${pad(h)}h ${pad(m)}m ${pad(s)}s`);
+      }
+    };
+
+    updateCountdown();
+    const timer = setInterval(updateCountdown, 1000);
+
+    return () => clearInterval(timer);
+  }, [punchInTime, punchOutTime, userData]);
 
   useEffect(() => {
     if (!userData || !isAttLoaded || !isLeavesLoaded) return;
     
     const localToday = new Date();
-    const yr = localToday.getFullYear();
-    const mo = String(localToday.getMonth() + 1).padStart(2, '0');
-    const currentYearMonth = `${yr}-${mo}`;
+    // Define the cycle window
+    let cycleEnd = new Date();
+    if (userData.nextSalaryDate) {
+      cycleEnd = new Date(userData.nextSalaryDate);
+      cycleEnd.setHours(0,0,0,0);
+      const now = new Date(localToday);
+      now.setHours(0,0,0,0);
+      while (cycleEnd < now) {
+        cycleEnd.setMonth(cycleEnd.getMonth() + 1);
+      }
+    } else {
+      cycleEnd = new Date(localToday.getFullYear(), localToday.getMonth() + 1, 0);
+    }
     
-    // We want to generate a record for each day of the current month
-    const daysInMonth = new Date(yr, localToday.getMonth() + 1, 0).getDate();
+    const cStart = new Date(cycleEnd);
+    cStart.setMonth(cStart.getMonth() - 1);
     
+    let actualStart = cStart;
+    if (userData.joinDate) {
+      const joinD = new Date(userData.joinDate);
+      if (joinD > cStart) actualStart = joinD;
+    }
+
     const combinedMap = new Map<string, any>();
     const userWeeklyOff = userData?.weeklyOff || 'Sunday';
-    const todayStr = `${yr}-${mo}-${String(localToday.getDate()).padStart(2, '0')}`;
+    const todayStr = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, '0')}-${String(localToday.getDate()).padStart(2, '0')}`;
     
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dy = String(d).padStart(2, '0');
-      const dateStr = `${currentYearMonth}-${dy}`;
+    for (let d = new Date(actualStart); d <= cycleEnd; d.setDate(d.getDate() + 1)) {
+      const dateStr = d.toISOString().split('T')[0];
       
       if (dateStr > todayStr) {
         continue;
       }
       
-      const dateObj = new Date(yr, localToday.getMonth(), d);
-      const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long' });
+      const dayName = d.toLocaleDateString('en-US', { weekday: 'long' });
       
       // 1. Check real attendance
       const realAtt = rawAttendance.find(att => att.date === dateStr);
       if (realAtt) {
         combinedMap.set(dateStr, {
           status: realAtt.status || 'Present',
-          date: dateStr
+          date: dateStr,
+          lateMinutes: realAtt.lateMinutes || 0
         });
         continue;
       }
@@ -486,9 +731,14 @@ export default function HomeScreen() {
     
     // Calculate stats
     let pres = 0, abs = 0, lat = 0, lev = 0;
+    let totalLateMinutes = 0;
     combinedMap.forEach(item => {
       if (item.status === 'Present') pres++;
-      else if (item.status === 'Late') { pres++; lat++; }
+      else if (item.status === 'Late') { 
+        pres++; 
+        lat++; 
+        totalLateMinutes += (item.lateMinutes || 0);
+      }
       else if (item.status === 'Absent') abs++;
       else if (item.status === 'On Leave' || item.status === 'Leave') lev++;
     });
@@ -499,9 +749,29 @@ export default function HomeScreen() {
 
     // Calculate Salary details
     const salaryAmount = Number(userData.salaryAmount || userData.baseSalary || userData.salary || 0);
-    const perDay = salaryAmount > 0 ? (salaryAmount / 30) : 0;
-    const deductionDays = abs + (lat * 0.5);
-    const expected = salaryAmount > 0 ? Math.max(0, Math.round(salaryAmount - (deductionDays * perDay))) : 0;
+    
+    // Total working days in cycle
+    let totalWorkingDays = 0;
+    for (let d = new Date(actualStart); d <= cycleEnd; d.setDate(d.getDate() + 1)) {
+       totalWorkingDays++;
+    }
+    
+    const perDay = totalWorkingDays > 0 ? (salaryAmount / totalWorkingDays) : 0;
+    
+    // Calculate Shift Duration in minutes
+    let shiftDurationMinutes = 480; // Default 8 hours
+    if (userData.shiftStartTime && userData.shiftEndTime) {
+      const [startH, startM] = userData.shiftStartTime.split(':').map(Number);
+      const [endH, endM] = userData.shiftEndTime.split(':').map(Number);
+      let diff = (endH * 60 + endM) - (startH * 60 + startM);
+      if (diff < 0) diff += 24 * 60; // Cross midnight
+      if (diff > 0) shiftDurationMinutes = diff;
+    }
+    
+    const perMinuteSalary = perDay / shiftDurationMinutes;
+    const deductionAmount = (abs * perDay) + (totalLateMinutes * perMinuteSalary);
+    
+    const expected = salaryAmount > 0 ? Math.max(0, Math.round(salaryAmount - deductionAmount)) : 0;
 
     // Next salary date formatting
     let rawNextSalaryDate = userData.nextSalaryDate || null;
@@ -533,71 +803,27 @@ export default function HomeScreen() {
   }, [rawAttendance, leaveList, userData, isAttLoaded, isLeavesLoaded]);
 
   useEffect(() => {
-    if (isAttLoaded && isLeavesLoaded) {
-      setIsInitialLoading(false);
-    }
-  }, [isAttLoaded, isLeavesLoaded]);
+    if (!userData || !isAttLoaded || !isLeavesLoaded) return;
+    setIsInitialLoading(false);
+  }, [userData, isAttLoaded, isLeavesLoaded]);
 
+  // Live Auto Punch-Out Watcher
   useEffect(() => {
-    let watchSubscription: any = null;
-
-    const startTracking = async () => {
-      if (!userData || userRole !== 'Field' || !punchInTime || punchOutTime) {
-        if (watchSubscription) {
-          watchSubscription.remove();
-          watchSubscription = null;
+    if (punchInTime && !punchOutTime && userData) {
+      const shiftEndTime = userData.shiftEndTime || '18:00';
+      const [hour, minute] = shiftEndTime.split(':').map(Number);
+      const shiftEndLocal = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), hour, minute, 0, 0);
+      
+      if (currentDate >= shiftEndLocal) {
+        const localToday = new Date();
+        const todayStr = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, '0')}-${String(localToday.getDate()).padStart(2, '0')}`;
+        const todayAtt = rawAttendance.find((a: any) => a.date === todayStr);
+        if (todayAtt && !todayAtt.punchOut) {
+          checkAndAutoPunchOut(todayAtt.id, todayAtt, shiftEndTime);
         }
-        return;
       }
-
-      try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== 'granted') return;
-
-        watchSubscription = await Location.watchPositionAsync(
-          {
-            accuracy: Location.Accuracy.Balanced,
-            timeInterval: 20000, // Every 20 seconds
-            distanceInterval: 20, // Or every 20 meters change
-          },
-          async (location) => {
-            const lat = location.coords.latitude;
-            const lng = location.coords.longitude;
-
-            const todayStr = new Date().toISOString().split('T')[0];
-            const attendanceId = `${userData.empId}_${todayStr}`;
-            const attRef = doc(db, 'attendance', attendanceId);
-
-            let currentAddr = 'Location Shared';
-            try {
-              const geocode = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
-              if (geocode.length > 0) {
-                const addr = geocode[0];
-                currentAddr = [addr.name, addr.street, addr.city, addr.region].filter(Boolean).join(', ');
-              }
-            } catch {}
-
-            await updateDoc(attRef, {
-              currentLatitude: lat,
-              currentLongitude: lng,
-              currentLocation: currentAddr,
-              lastLocationUpdate: new Date().toISOString()
-            }).catch(err => console.log("Failed to update active location:", err));
-          }
-        );
-      } catch (err) {
-        console.log("Error starting location watch:", err);
-      }
-    };
-
-    startTracking();
-
-    return () => {
-      if (watchSubscription) {
-        watchSubscription.remove();
-      }
-    };
-  }, [punchInTime, punchOutTime, userRole, userData?.empId]);
+    }
+  }, [currentDate, punchInTime, punchOutTime, userData, rawAttendance]);
 
   const handlePunch = async () => {
     if (!userData) return;
@@ -607,18 +833,41 @@ export default function HomeScreen() {
     const attRef = doc(db, 'attendance', attendanceId);
 
     if (!punchInTime) {
-      if (userRole === 'Office' && !isNearOffice) {
-        Alert.alert("Punch In Failed", "You must be inside the office area to punch in.");
-        return;
-      }
-
       let locationAddress = 'Unknown Location';
       let coords: { latitude: number; longitude: number } | null = null;
       try {
         let { status } = await Location.requestForegroundPermissionsAsync();
         if (status === 'granted') {
-          let location = await Location.getCurrentPositionAsync({});
+          let location = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
           coords = { latitude: location.coords.latitude, longitude: location.coords.longitude };
+
+          // Double check branch coordinates strictly at the moment of punch-in
+          if (userRole === 'Office') {
+            const targetBranchId = activeSwap ? activeSwap.originalBranchId : (userData?.branchId || '');
+            if (targetBranchId) {
+              const branchDocRef = doc(db, 'branches', targetBranchId);
+              const branchSnap = await getDoc(branchDocRef);
+              if (branchSnap.exists()) {
+                const branchData = branchSnap.data();
+                const branchLat = branchData.latitude;
+                const branchLng = branchData.longitude;
+                const branchRadius = branchData.radius || 100;
+
+                const distance = calculateDistance(coords.latitude, coords.longitude, branchLat, branchLng);
+                if (distance > branchRadius) {
+                  setIsNearOffice(false);
+                  Alert.alert(
+                    "Punch In Failed",
+                    `You are outside the office area. Current distance: ${Math.round(distance)}m (Allowed Range: ${branchRadius}m).`
+                  );
+                  return;
+                }
+              }
+            }
+          }
+
           let geocode = await Location.reverseGeocodeAsync({
             latitude: location.coords.latitude,
             longitude: location.coords.longitude
@@ -627,15 +876,36 @@ export default function HomeScreen() {
             const addr = geocode[0];
             locationAddress = [addr.name, addr.street, addr.city, addr.region].filter(Boolean).join(', ');
           }
+        } else {
+          Alert.alert("Permission Denied", "Location permission is required to punch in.");
+          return;
         }
       } catch (error) {
         console.log("Location error", error);
+        Alert.alert("Location Error", "Could not verify your location. Please check your GPS settings.");
+        return;
       }
 
       const now = new Date();
       setPunchInTime(now);
       globalHomeCache.punchInTime = now;
       await AsyncStorage.setItem(`punchIn_${today}`, now.toISOString());
+
+      let currentStatus = 'Present';
+      let lateMins = 0;
+      if (userData.shiftStartTime) {
+        const [hour, minute] = userData.shiftStartTime.split(':').map(Number);
+        const shiftStartLocal = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, 0, 0);
+        
+        if (now > shiftStartLocal) {
+          lateMins = Math.floor((now.getTime() - shiftStartLocal.getTime()) / 60000);
+          if (lateMins > 5) {
+            currentStatus = 'Late';
+          } else {
+            lateMins = 0;
+          }
+        }
+      }
 
       try {
         await setDoc(attRef, {
@@ -648,8 +918,34 @@ export default function HomeScreen() {
           locationIn: locationAddress,
           latitudeIn: coords ? coords.latitude : null,
           longitudeIn: coords ? coords.longitude : null,
-          status: 'Present'
+          status: currentStatus,
+          lateMinutes: lateMins,
+          branchId: activeSwap ? activeSwap.originalBranchId : (userData?.branchId || '')
         });
+        
+        if (userRole === 'Field') {
+          try {
+            const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+            if (bgStatus === 'granted') {
+              await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+                accuracy: Location.Accuracy.Balanced,
+                timeInterval: 20000,
+                distanceInterval: 20,
+                deferredUpdatesInterval: 20000,
+                deferredUpdatesDistance: 20,
+                showsBackgroundLocationIndicator: true,
+                foregroundService: {
+                  notificationTitle: "Live Tracking Active",
+                  notificationBody: "Your location is being tracked for duty.",
+                  notificationColor: "#138A43"
+                }
+              });
+            }
+          } catch (bgErr) {
+            console.log("Failed to start background tracking", bgErr);
+          }
+        }
+
         Alert.alert("Success", `Punch In successful at ${locationAddress}!`);
       } catch (error: any) {
         Alert.alert("Error", error.message);
@@ -692,6 +988,15 @@ export default function HomeScreen() {
           longitudeOut: coords ? coords.longitude : null,
           hours: hoursStr
         });
+
+        if (userRole === 'Field') {
+          try {
+            await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+          } catch (stopErr) {
+            console.log("Failed to stop background tracking", stopErr);
+          }
+        }
+
         Alert.alert("Success", "Punch Out successful!");
       } catch (error: any) {
         Alert.alert("Error", error.message);
@@ -762,7 +1067,22 @@ export default function HomeScreen() {
 
   const getWorkingHours = () => {
     if (!punchInTime) return '00h 00m';
-    const end = punchOutTime || currentDate;
+    
+    let end = punchOutTime || currentDate;
+    
+    if (userData && !punchOutTime) {
+      const shiftEndTime = userData.shiftEndTime || '18:00';
+      const [hour, minute] = shiftEndTime.split(':').map(Number);
+      const shiftEndLocal = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), hour, minute, 0, 0);
+      
+      if (currentDate > shiftEndLocal) {
+        end = shiftEndLocal;
+        if (punchInTime > shiftEndLocal) {
+          end = new Date(punchInTime.getTime() + 60000);
+        }
+      }
+    }
+
     const diffMs = end.getTime() - punchInTime.getTime();
     const hours = Math.floor(diffMs / (1000 * 60 * 60));
     const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
@@ -796,13 +1116,13 @@ export default function HomeScreen() {
         disabled: true
       };
     }
-    if (isHoliday && isOffCanceled) {
+    if (isHoliday && isOffCanceled && !punchInTime && !punchOutTime) {
       return {
         bgClass: 'bg-red-50 border-red-100',
         iconBgClass: 'bg-red-500',
         icon: <Calendar color="white" size={20} />,
         title: 'Weekly Off Cancelled',
-        subtitle: 'Weekly off cancelled by Admin. Please punch in.',
+        subtitle: 'Please punch in.',
         disabled: false
       };
     }
@@ -919,6 +1239,21 @@ export default function HomeScreen() {
             </View>
           </View>
 
+          {/* Cover/Swap Banner Card */}
+          {activeSwap && (
+            <View className="bg-blue-50 border border-blue-100 rounded-2xl p-4 flex-row items-center gap-3 mb-4">
+              <View className="w-10 h-10 rounded-full bg-blue-100 items-center justify-center">
+                <UserCheck color="#2563EB" size={20} />
+              </View>
+              <View className="flex-1">
+                <Text className="text-blue-900 font-bold text-[14px]">Cover Duty Active</Text>
+                <Text className="text-blue-700 text-[11px] mt-0.5">
+                  You are covering for <Text className="font-semibold">{activeSwap.originalStaffName}</Text> at <Text className="font-semibold">{activeSwap.originalBranchName || 'their branch'}</Text> today.
+                </Text>
+              </View>
+            </View>
+          )}
+
           {/* Check-in Banner */}
           <View className={`rounded-2xl p-4 flex-row justify-between items-center mb-4 border ${bannerData.bgClass}`}>
             <View className="flex-row items-center gap-3">
@@ -930,19 +1265,20 @@ export default function HomeScreen() {
                 <Text className="text-gray-500 text-[11px] mt-0.5">{bannerData.subtitle}</Text>
               </View>
             </View>
-            {!punchOutTime && (!bannerData.disabled || bannerData.title === 'Outside Office Area') && (
+            {punchInTime && !punchOutTime ? (
+              <View className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2 items-center justify-center min-w-[110px]">
+                <Text className="text-amber-800 text-[9px] font-black uppercase tracking-wider">Auto Out In</Text>
+                <Text className="text-amber-700 text-xs font-black mt-0.5">{countdownText}</Text>
+                <Text className="text-amber-600 text-[8px] font-bold mt-0.5 leading-none">Duty auto off</Text>
+              </View>
+            ) : !punchInTime && !bannerData.disabled && (
               <TouchableOpacity 
                 activeOpacity={0.8}
                 onPress={handlePunch}
-                disabled={bannerData.disabled && bannerData.title === 'Outside Office Area'}
-                className={`px-4 py-2.5 rounded-xl shadow-sm ${
-                  bannerData.disabled 
-                    ? 'bg-gray-300 shadow-none' 
-                    : punchInTime ? 'bg-red-500' : 'bg-[#138A43]'
-                }`}
+                className="px-4 py-2.5 rounded-xl shadow-sm bg-[#138A43]"
               >
-                <Text className={`text-sm font-bold ${bannerData.disabled ? 'text-gray-600' : 'text-white'}`}>
-                  {bannerData.disabled ? 'Outside Office' : punchInTime ? 'Punch Out' : 'Punch In Now'}
+                <Text className="text-sm font-bold text-white">
+                  Punch In Now
                 </Text>
               </TouchableOpacity>
             )}
@@ -988,96 +1324,24 @@ export default function HomeScreen() {
           )}
         </View>
 
-        {/* 2. Attendance Overview Card (Current Month + Real Data) */}
-        <View className="bg-white rounded-[20px] p-4 shadow-sm border border-gray-100">
-          <View className="flex-row justify-between items-center mb-4">
-            <View className="flex-row items-center gap-2">
-              <Calendar color="#208AEF" size={20} strokeWidth={2.5} />
-              <Text className="text-black text-[16px] font-bold">Attendance Overview</Text>
+        {/* 2. Daily Update Banner */}
+        <View className="bg-[#003B95] rounded-[24px] p-5 shadow-sm border border-white/10 relative overflow-hidden">
+          {/* Decorative Background Accents */}
+          <View className="absolute -top-10 -right-10 w-28 h-28 rounded-full bg-[#FFD100]/10" />
+          <View className="absolute -bottom-6 -left-6 w-20 h-20 rounded-full bg-[#208AEF]/10" />
+          
+          <View className="flex-row items-center gap-2 mb-3 z-10">
+            <View className="bg-[#FFD100] p-1.5 rounded-xl">
+              <Megaphone color="#003B95" size={18} strokeWidth={2.5} />
             </View>
-            <View className="bg-blue-50 px-2.5 py-1 rounded-full border border-blue-100">
-              <Text className="text-[#208AEF] text-xs font-semibold">Current Month</Text>
-            </View>
+            <Text className="text-[#FFD100] text-[13px] font-black tracking-widest uppercase">
+              {dailyBanner?.title || "Daily Update"}
+            </Text>
           </View>
-
-          <View className="flex-row justify-between items-center">
-            {/* Box 1 */}
-            <View className="bg-[#E6F4EA] w-[23%] aspect-square rounded-2xl items-center justify-center p-2">
-              <CalendarCheck2 color="#138A43" size={24} strokeWidth={2.5} className="mb-1" />
-              <Text className="text-black text-lg font-bold">{monthlyAttendance.present}</Text>
-              <Text className="text-gray-600 text-[9px] font-medium text-center">Days Present</Text>
-            </View>
-            {/* Box 2 */}
-            <View className="bg-[#FEE2E2] w-[23%] aspect-square rounded-2xl items-center justify-center p-2">
-              <CalendarX2 color="#EF4444" size={24} strokeWidth={2.5} className="mb-1" />
-              <Text className="text-black text-lg font-bold">{monthlyAttendance.absent}</Text>
-              <Text className="text-gray-600 text-[9px] font-medium text-center">Days Absent</Text>
-            </View>
-            {/* Box 3 */}
-            <View className="bg-[#FEF3C7] w-[23%] aspect-square rounded-2xl items-center justify-center p-2">
-              <Clock color="#F59E0B" size={24} strokeWidth={2.5} className="mb-1" />
-              <Text className="text-black text-lg font-bold">{monthlyAttendance.late}</Text>
-              <Text className="text-gray-600 text-[9px] font-medium text-center">Days Late</Text>
-            </View>
-            {/* Box 4 */}
-            <View className="bg-[#EFF6FF] w-[23%] aspect-square rounded-2xl items-center justify-center p-2">
-              <Plane color="#3B82F6" size={24} strokeWidth={2.5} className="mb-1" />
-              <Text className="text-black text-lg font-bold">{monthlyAttendance.leave}</Text>
-              <Text className="text-gray-600 text-[9px] font-medium text-center">On Leave</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* 3. Salary Overview Card */}
-        <View className="bg-white rounded-[20px] p-4 shadow-sm border border-gray-100">
-          <View className="flex-row justify-between items-center mb-4">
-            <View className="flex-row items-center gap-2">
-              <View className="bg-[#208AEF] rounded-full w-6 h-6 items-center justify-center">
-                <IndianRupee color="white" size={14} strokeWidth={2.5} />
-              </View>
-              <Text className="text-black text-[16px] font-bold">Salary Overview</Text>
-            </View>
-            <TouchableOpacity onPress={() => router.push('/salary')}>
-              <Text className="text-[#208AEF] text-xs font-bold">View Details</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View className="flex-row justify-between items-center">
-            {/* Item 1 */}
-            <View className="w-[24%] items-center bg-[#F8FAFC] py-3 rounded-xl">
-              <View className="flex-row items-center gap-1 mb-2">
-                <Calendar color="#10B981" size={12} strokeWidth={3} />
-                <Text className="text-gray-500 text-[9px] font-medium">Salary Date</Text>
-              </View>
-              <Text className="text-black text-[11px] font-bold">{salaryData.formattedSalaryDate || 'Not Set'}</Text>
-            </View>
-            {/* Item 2 */}
-            <View className="w-[24%] items-center bg-[#F8FAFC] py-3 rounded-xl">
-              <View className="flex-row items-center gap-1 mb-2">
-                <Clock color="#EF4444" size={12} strokeWidth={3} />
-                <Text className="text-gray-500 text-[9px] font-medium">Days Late</Text>
-              </View>
-              <Text className="text-[#EF4444] text-[11px] font-bold">{salaryData.daysLate} Days</Text>
-            </View>
-            {/* Item 3 */}
-            <View className="w-[24%] items-center bg-[#F8FAFC] py-3 rounded-xl">
-              <View className="flex-row items-center gap-1 mb-2">
-                <Plane color="#3B82F6" size={12} strokeWidth={3} />
-                <Text className="text-gray-500 text-[9px] font-medium">Leave Taken</Text>
-              </View>
-              <Text className="text-gray-600 text-[11px] font-bold">{salaryData.leaveTaken} Days</Text>
-            </View>
-            {/* Item 4 */}
-            <View className="w-[24%] items-center bg-[#F8FAFC] py-3 rounded-xl">
-              <View className="flex-row items-center gap-1 mb-2">
-                <IndianRupee color="#10B981" size={12} strokeWidth={3} />
-                <Text className="text-gray-500 text-[9px] font-medium">Expected</Text>
-              </View>
-              <Text className="text-[#10B981] text-[11px] font-bold">
-                {salaryData.expectedSalary > 0 ? `₹ ${salaryData.expectedSalary.toLocaleString('en-IN')}` : '₹ 0'}
-              </Text>
-            </View>
-          </View>
+          
+          <Text className="text-white text-[20px] font-black leading-tight tracking-wide z-10" style={{ lineHeight: 28 }}>
+            {dailyBanner?.message || "Welcome to Ananya World! Mark your attendance on time."}
+          </Text>
         </View>
 
         {/* 4. Quick Actions Card */}

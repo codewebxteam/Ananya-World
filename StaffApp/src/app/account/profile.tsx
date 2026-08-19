@@ -23,6 +23,7 @@ export default function ProfileScreen() {
     name: globalProfileCache?.name || "",
     email: globalProfileCache?.email || "",
     phone: globalProfileCache?.phone || "",
+    parentPhone: globalProfileCache?.parentPhone || "",
     address: globalProfileCache?.address || "",
     workLocation: globalProfileCache?.workLocation || "",
     empId: globalProfileCache?.empId || "",
@@ -37,6 +38,7 @@ export default function ProfileScreen() {
         name: parsed.name || "",
         email: parsed.email || "",
         phone: parsed.phone || "",
+        parentPhone: parsed.parentPhone || "",
         address: parsed.address || "",
         workLocation: parsed.workLocation || "",
         empId: parsed.empId || "",
@@ -120,7 +122,11 @@ export default function ProfileScreen() {
 
       // Update Firestore
       await updateDoc(doc(db, 'users', uid), {
-        avatar: finalAvatarUrl
+        avatar: finalAvatarUrl,
+        name: formData.name,
+        phone: formData.phone,
+        parentPhone: formData.parentPhone,
+        address: formData.address
       });
 
       // Update local storage & global memory cache
@@ -128,6 +134,10 @@ export default function ProfileScreen() {
       if (data) {
         const parsed = JSON.parse(data);
         parsed.avatar = finalAvatarUrl;
+        parsed.name = formData.name;
+        parsed.phone = formData.phone;
+        parsed.parentPhone = formData.parentPhone;
+        parsed.address = formData.address;
         globalProfileCache = parsed;
         await AsyncStorage.setItem('userData', JSON.stringify(parsed));
       }
@@ -141,15 +151,16 @@ export default function ProfileScreen() {
     }
   };
 
-  const InputWrapper = ({ icon: Icon, value, multiline = false }: any) => (
-    <View className={`flex-row ${multiline ? 'items-start py-3' : 'items-center h-12'} px-3 rounded-xl bg-[#F8FAFC] border border-gray-100`}>
-      <Icon color="#6B7280" size={18} className={`mr-2 ${multiline ? 'mt-0.5' : ''}`} />
+  const InputWrapper = ({ icon: Icon, value, multiline = false, fieldName, editableField = false }: any) => (
+    <View className={`flex-row ${multiline ? 'items-start py-3' : 'items-center h-12'} px-3 rounded-xl bg-[#F8FAFC] border ${isEditing && editableField ? 'border-blue-200 bg-white' : 'border-gray-100'}`}>
+      <Icon color={(isEditing && editableField) ? "#208AEF" : "#6B7280"} size={18} className={`mr-2 ${multiline ? 'mt-0.5' : ''}`} />
       <TextInput 
-        className="flex-1 text-[14px] text-gray-700 font-medium" 
+        className={`flex-1 text-[14px] font-medium ${isEditing && editableField ? 'text-black' : 'text-gray-700'}`} 
         value={value}
-        editable={false}
+        onChangeText={(text) => fieldName && setFormData({...formData, [fieldName]: text})}
+        editable={isEditing && editableField}
         multiline={multiline}
-        pointerEvents="none"
+        pointerEvents={(isEditing && editableField) ? "auto" : "none"}
       />
     </View>
   );
@@ -240,7 +251,7 @@ export default function ProfileScreen() {
             
             <View className="mb-2">
               <Text className="text-gray-500 text-xs font-medium mb-1 ml-1">Full Name</Text>
-              <InputWrapper icon={User} value={formData.name} />
+              <InputWrapper icon={User} value={formData.name} fieldName="name" editableField={true} />
             </View>
 
             <View className="mb-2">
@@ -260,7 +271,12 @@ export default function ProfileScreen() {
 
             <View className="mb-2">
               <Text className="text-gray-500 text-xs font-medium mb-1 ml-1">Phone Number</Text>
-              <InputWrapper icon={Phone} value={formData.phone} />
+              <InputWrapper icon={Phone} value={formData.phone} fieldName="phone" editableField={true} />
+            </View>
+
+            <View className="mb-2">
+              <Text className="text-gray-500 text-xs font-medium mb-1 ml-1">Parent's Number</Text>
+              <InputWrapper icon={Phone} value={formData.parentPhone} fieldName="parentPhone" editableField={true} />
             </View>
           </View>
 
@@ -275,7 +291,7 @@ export default function ProfileScreen() {
 
             <View className="mb-2">
               <Text className="text-gray-500 text-xs font-medium mb-1 ml-1">Home Address</Text>
-              <InputWrapper icon={MapPin} value={formData.address} multiline={true} />
+              <InputWrapper icon={MapPin} value={formData.address} multiline={true} fieldName="address" editableField={true} />
             </View>
           </View>
         </View>

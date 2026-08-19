@@ -31,7 +31,6 @@ export default function AddStaffModal({ isOpen, onClose, branchesList }: AddStaf
     salaryAmount: '',
     nextSalaryDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).toISOString().split('T')[0], // Default to 1st of next month
     weeklyOff: 'Sunday',
-    workLocation: '',
   });
 
   const isStepValid = (step: number) => {
@@ -49,7 +48,6 @@ export default function AddStaffModal({ isOpen, onClose, branchesList }: AddStaf
         formData.empId.trim() !== '' &&
         formData.designation.trim() !== '' &&
         formData.branchId !== '' &&
-        formData.workLocation.trim() !== '' &&
         formData.joinDate !== ''
       );
     }
@@ -104,7 +102,6 @@ export default function AddStaffModal({ isOpen, onClose, branchesList }: AddStaf
         salaryAmount: formData.salaryAmount,
         nextSalaryDate: formData.nextSalaryDate,
         weeklyOff: formData.weeklyOff,
-        workLocation: formData.workLocation,
         status: 'Active',
         createdAt: serverTimestamp(),
       });
@@ -115,7 +112,7 @@ export default function AddStaffModal({ isOpen, onClose, branchesList }: AddStaf
       setFormData({
         name: '', email: '', password: '', empId: '', staffType: 'Field Staff', branchId: '',
         phone: '', address: '', designation: '', joinDate: new Date().toISOString().split('T')[0],
-        shiftStartTime: '09:00', shiftEndTime: '18:00', salaryAmount: '', nextSalaryDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).toISOString().split('T')[0], weeklyOff: 'Sunday', workLocation: '',
+        shiftStartTime: '09:00', shiftEndTime: '18:00', salaryAmount: '', nextSalaryDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1).toISOString().split('T')[0], weeklyOff: 'Sunday',
       });
     } catch (err: any) {
       console.error(err);
@@ -305,15 +302,6 @@ export default function AddStaffModal({ isOpen, onClose, branchesList }: AddStaf
                     <div className="relative">
                       <Calendar size={18} className="absolute left-3.5 top-3.5 text-gray-400 pointer-events-none" />
                       <input required type="date" name="joinDate" value={formData.joinDate} onChange={handleChange} className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-gray-800 font-medium" />
-                    </div>
-                  </div>
-
-                  {/* Work Location */}
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Work Location / Lab Name</label>
-                    <div className="relative">
-                      <MapPin size={18} className="absolute left-3.5 top-3.5 text-gray-400" />
-                      <input required type="text" name="workLocation" value={formData.workLocation} onChange={handleChange} className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-gray-800 font-medium placeholder-gray-400" placeholder="e.g. Lab 1, Central Office, Field" />
                     </div>
                   </div>
                 </div>

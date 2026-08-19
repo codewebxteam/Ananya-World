@@ -8,6 +8,9 @@ import {
 import { router } from 'expo-router';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { auth } from '../../config/firebase';
+import { signOut } from 'firebase/auth';
+import { clearGlobalHeaderCache } from '../../components/Header';
 
 export default function AccountScreen() {
 
@@ -60,8 +63,14 @@ export default function AccountScreen() {
           text: "Log Out", 
           style: "destructive",
           onPress: async () => {
-            await AsyncStorage.removeItem('isLoggedIn');
-            router.replace('/login');
+            try {
+              await signOut(auth);
+              await AsyncStorage.clear();
+              clearGlobalHeaderCache();
+              router.replace('/login');
+            } catch (error) {
+              console.log('Error logging out:', error);
+            }
           }
         }
       ]

@@ -3,7 +3,7 @@ import {
   ArrowLeft, X, User, MapPin, Briefcase, Hash, Calendar, Phone, Mail, 
   Clock, CreditCard, Landmark, FileText, CheckCircle2, AlertCircle, 
   ShieldCheck, Download, Edit, KeyRound, ExternalLink, Eye, Image as ImageIcon,
-  Building2, Sparkles, AlertTriangle, Loader2, History
+  Building2, Sparkles, AlertTriangle, Loader2, History, Trash2
 } from 'lucide-react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -14,9 +14,10 @@ interface StaffDetailsModalProps {
   staff: any;
   onEdit?: (staff: any) => void;
   onResetPassword?: (email: string) => void;
+  onDelete?: (staff: any) => void;
 }
 
-export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onResetPassword }: StaffDetailsModalProps) {
+export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onResetPassword, onDelete }: StaffDetailsModalProps) {
   const [selectedImagePreview, setSelectedImagePreview] = useState<{ title: string; url: string } | null>(null);
   const [activeTab, setActiveTab] = useState<'all' | 'documents' | 'bank' | 'payroll'>('all');
   
@@ -27,6 +28,31 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
 
   useEffect(() => {
     if (!isOpen || (!staff?.id && !staff?.empId)) return;
+
+    if (staff.nextSalaryDate) {
+      // Find the current cycle (first option from getMonthOptions logic)
+      let cycleEnd = new Date(staff.nextSalaryDate);
+      cycleEnd.setHours(0,0,0,0);
+      const now = new Date();
+      now.setHours(0,0,0,0);
+      while (cycleEnd < now) {
+        cycleEnd.setMonth(cycleEnd.getMonth() + 1);
+      }
+      
+      const cEnd = new Date(cycleEnd);
+      const cStart = new Date(cEnd);
+      cStart.setMonth(cStart.getMonth() - 1);
+      
+      let actualStart = cStart;
+      if (staff.joinDate) {
+        const joinD = new Date(staff.joinDate);
+        if (joinD > cStart) actualStart = joinD;
+      }
+      
+      const startStr = actualStart.toISOString().split('T')[0];
+      const endStr = cEnd.toISOString().split('T')[0];
+      setSelectedMonthKey(`${startStr}_${endStr}`);
+    }
 
     setLoadingLogs(true);
 
@@ -59,42 +85,99 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
   const bank = staff.bankDetails || {};
 
   // Recalculate stats dynamically based on the selected month/year filter
+  // Recalculate stats dynamically based on the selected month/year or cycle filter
   const filteredLogs = attendanceLogs.filter(log => {
     if (!log.date) return false;
-    const parts = log.date.split('-');
-    const logYear = parseInt(parts[0]);
-    const logMonth = parseInt(parts[1]) - 1;
-    const [selYear, selMonth] = selectedMonthKey.split('-').map(Number);
-    return logYear === selYear && logMonth === selMonth;
+    
+    if (selectedMonthKey.includes('_')) {
+      // It's a cycle window (start_end)
+      const [startStr, endStr] = selectedMonthKey.split('_');
+      return log.date >= startStr && log.date <= endStr;
+    } else {
+      // Fallback calendar month logic
+      const parts = log.date.split('-');
+      const logYear = parseInt(parts[0]);
+      const logMonth = parseInt(parts[1]) - 1;
+      const [selYear, selMonth] = selectedMonthKey.split('-').map(Number);
+      return logYear === selYear && logMonth === selMonth;
+    }
   });
 
   let presentCount = 0;
   let lateCount = 0;
   let absentCount = 0;
   let halfDayCount = 0;
+  let totalLateMinutes = 0;
 
   filteredLogs.forEach(log => {
     const st = log.status || '';
     if (st === 'Present' || st === 'On Duty') presentCount++;
-    else if (st === 'Late') lateCount++;
+    else if (st === 'Late') {
+      lateCount++;
+      totalLateMinutes += (log.lateMinutes || 0);
+    }
     else if (st === 'Absent') absentCount++;
     else if (st === 'Half Day') halfDayCount++;
   });
 
   const getMonthOptions = () => {
     const options = [];
-    const now = new Date();
-    for (let i = 0; i < 6; i++) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      options.push({
-        label: d.toLocaleString('default', { month: 'long', year: 'numeric' }),
-        value: `${d.getFullYear()}-${d.getMonth()}`
-      });
+    
+    if (staff.nextSalaryDate) {
+      // Build 6 historical salary cycles
+      let cycleEnd = new Date(staff.nextSalaryDate);
+      cycleEnd.setHours(0,0,0,0);
+      
+      // If the nextSalaryDate is in the past, roll it forward until it's in the future
+      const now = new Date();
+      now.setHours(0,0,0,0);
+      while (cycleEnd < now) {
+        cycleEnd.setMonth(cycleEnd.getMonth() + 1);
+      }
+
+      for (let i = 0; i < 6; i++) {
+        const cEnd = new Date(cycleEnd);
+        cEnd.setMonth(cEnd.getMonth() - i);
+        
+        const cStart = new Date(cEnd);
+        cStart.setMonth(cStart.getMonth() - 1);
+        
+        // If staff join date is after cycle start, cap it
+        let actualStart = cStart;
+        if (staff.joinDate) {
+          const joinD = new Date(staff.joinDate);
+          if (joinD > cStart) actualStart = joinD;
+        }
+
+        const startStr = actualStart.toISOString().split('T')[0];
+        const endStr = cEnd.toISOString().split('T')[0];
+        
+        const labelStart = actualStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+        const labelEnd = cEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+        
+        options.push({
+          label: `${labelStart} - ${labelEnd} (Cycle)`,
+          value: `${startStr}_${endStr}`
+        });
+      }
+    } else {
+      // Fallback to calendar month if no salary date is set
+      const now = new Date();
+      for (let i = 0; i < 6; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        options.push({
+          label: d.toLocaleString('default', { month: 'long', year: 'numeric' }),
+          value: `${d.getFullYear()}-${d.getMonth()}`
+        });
+      }
     }
+    
     return options;
   };
 
-  const formatShiftTimings = (start: string, end: string) => {
+  const formatShiftTimings = (start: string | undefined, end: string | undefined) => {
+    if (!start && !end) return 'Not Provided';
+    
     const formatTimeStr = (timeStr: string) => {
       if (!timeStr) return '';
       const parts = timeStr.split(':');
@@ -159,6 +242,15 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
             </button>
           )}
 
+          {onDelete && (
+            <button 
+              onClick={() => { onClose(); onDelete(staff); }}
+              className="flex items-center gap-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-3.5 py-2 rounded-xl text-xs font-bold transition-all"
+            >
+              <Trash2 size={14} /> Delete Staff
+            </button>
+          )}
+
           <button 
             onClick={onClose}
             className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors ml-2"
@@ -185,7 +277,8 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
                   <img 
                     src={staff.avatar} 
                     alt={staff.name} 
-                    className="w-24 h-24 rounded-2xl object-cover border-4 border-white/20 shadow-lg bg-slate-800"
+                    onClick={() => setSelectedImagePreview({ url: staff.avatar, title: 'Profile Photo' })}
+                    className="w-24 h-24 rounded-2xl object-cover border-4 border-white/20 shadow-lg bg-slate-800 cursor-pointer hover:scale-105 transition-transform duration-200"
                   />
                 ) : (
                   <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 border-4 border-white/20 shadow-lg flex items-center justify-center text-3xl font-extrabold text-white uppercase tracking-wider">
@@ -219,7 +312,7 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
                 <div className="flex flex-wrap items-center justify-center sm:justify-start gap-4 text-xs text-slate-300">
                   <span className="flex items-center gap-1.5"><Mail size={14} className="text-blue-400" /> {staff.email}</span>
                   <span className="flex items-center gap-1.5"><Phone size={14} className="text-blue-400" /> {staff.phone || staff.phoneNumber || 'N/A'}</span>
-                  <span className="flex items-center gap-1.5"><MapPin size={14} className="text-blue-400" /> {staff.workLocation || 'Main Hub'}</span>
+                  <span className="flex items-center gap-1.5"><MapPin size={14} className="text-blue-400" /> {staff.workLocation || 'Not Provided'}</span>
                 </div>
               </div>
             </div>
@@ -242,7 +335,7 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
         <div className="flex items-center gap-2 border-b border-gray-200 pb-1 overflow-x-auto">
           {[
             { id: 'all', label: 'Overview & Details', icon: User },
-            { id: 'documents', label: 'Uploaded Documents', icon: FileText, count: (docs.aadharFront ? 1 : 0) + (docs.aadharBack ? 1 : 0) + (docs.panCard ? 1 : 0) },
+            { id: 'documents', label: 'Uploaded Documents', icon: FileText, count: (docs.aadharFront ? 1 : 0) + (docs.aadharBack ? 1 : 0) + (docs.panCard ? 1 : 0) + (docs.professionalCertificate ? 1 : 0) },
             { id: 'bank', label: 'Bank Account Info', icon: Landmark, isVerified: !!bank.accountNumber },
             { id: 'payroll', label: 'Salary & Attendance', icon: CreditCard },
           ].map((t) => {
@@ -299,12 +392,12 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
                   <p className="font-semibold text-gray-800 mt-0.5">{staff.phone || staff.phoneNumber || 'N/A'}</p>
                 </div>
                 <div>
-                  <p className="text-gray-400 font-semibold uppercase text-[10px]">Home Address</p>
-                  <p className="font-medium text-gray-700 leading-relaxed mt-0.5">{staff.address || 'N/A'}</p>
+                  <p className="text-gray-400 font-semibold uppercase text-[10px]">Parent's Number</p>
+                  <p className="font-semibold text-gray-800 mt-0.5">{staff.parentPhone || 'N/A'}</p>
                 </div>
                 <div>
-                  <p className="text-gray-400 font-semibold uppercase text-[10px]">Work Location</p>
-                  <p className="font-semibold text-gray-800 mt-0.5">{staff.workLocation || 'Main Hub'}</p>
+                  <p className="text-gray-400 font-semibold uppercase text-[10px]">Home Address</p>
+                  <p className="font-medium text-gray-700 leading-relaxed mt-0.5">{staff.address || 'N/A'}</p>
                 </div>
               </div>
             </div>
@@ -347,7 +440,7 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
                   </div>
                   <div>
                     <p className="text-gray-400 font-semibold uppercase text-[10px]">Weekly Off</p>
-                    <p className="font-semibold text-gray-800 mt-0.5">{staff.weeklyOff || 'Sunday'}</p>
+                    <p className="font-semibold text-gray-800 mt-0.5">{staff.weeklyOff || 'Not Provided'}</p>
                   </div>
                 </div>
 
@@ -371,6 +464,14 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
                   <p className="text-emerald-700 text-[10px] uppercase font-bold">Base Monthly Salary</p>
                   <p className="text-xl font-extrabold text-emerald-800 mt-1">₹ {Number(staff.salaryAmount || 0).toLocaleString()}</p>
                   <p className="text-[10px] text-emerald-600 mt-1">Next Salary Cycle: {staff.nextSalaryDate ? new Date(staff.nextSalaryDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : 'N/A'}</p>
+                </div>
+                
+                <div className="bg-red-50 p-3.5 rounded-xl border border-red-100">
+                  <p className="text-red-700 text-[10px] uppercase font-bold">Estimated Deductions (This Cycle)</p>
+                  <div className="mt-1.5 flex justify-between items-center text-red-800 font-bold">
+                    <span>Absent: {absentCount} days</span>
+                    <span>Late: {totalLateMinutes} mins</span>
+                  </div>
                 </div>
 
                 <div className="pt-2">
@@ -670,6 +771,34 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
                       className="relative rounded-xl overflow-hidden border border-gray-300 cursor-pointer group bg-black/5"
                     >
                       <img src={docs.panCard} alt="PAN Card" className="w-full h-44 object-cover group-hover:scale-105 transition-transform duration-200" />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white font-bold text-xs gap-1.5">
+                        <Eye size={18} /> Click to View
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="h-44 rounded-xl bg-white border-2 border-dashed border-gray-200 flex flex-col items-center justify-center text-gray-400 text-xs">
+                      <ImageIcon size={32} className="mb-2 text-gray-300" />
+                      Not Uploaded
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Professional Course Certificate */}
+              <div className="bg-gray-50 rounded-2xl p-4 border border-gray-200/80 flex flex-col justify-between">
+                <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-xs font-bold text-gray-800">Professional Certificate</span>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${docs.professionalCertificate ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-500'}`}>
+                      {docs.professionalCertificate ? 'Uploaded' : 'Missing'}
+                    </span>
+                  </div>
+                  {docs.professionalCertificate ? (
+                    <div 
+                      onClick={() => setSelectedImagePreview({ title: 'Professional Course Certificate', url: docs.professionalCertificate })}
+                      className="relative rounded-xl overflow-hidden border border-gray-300 cursor-pointer group bg-black/5"
+                    >
+                      <img src={docs.professionalCertificate} alt="Professional Course Certificate" className="w-full h-44 object-cover group-hover:scale-105 transition-transform duration-200" />
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white font-bold text-xs gap-1.5">
                         <Eye size={18} /> Click to View
                       </div>
