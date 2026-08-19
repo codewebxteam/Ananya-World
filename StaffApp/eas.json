@@ -11,35 +11,11 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
-      },
-      "env": {
-        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyBoL0gZpU3f9Yl14F1fqLEGjj0ZxQnCZw4",
-        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "ananya-world-1979.firebaseapp.com",
-        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "ananya-world-1979",
-        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "ananya-world-1979.firebasestorage.app",
-        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "669540818585",
-        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:669540818585:web:ef26b4f179202c71226208",
-        "EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID": "G-YTY101GQ69",
-        "EXPO_PUBLIC_IMAGEKIT_URL_ENDPOINT": "https://upload.imagekit.io/api/v1/files/upload",
-        "EXPO_PUBLIC_IMAGEKIT_PUBLIC_KEY": "public_GKBhKTnlC3b5BN0mAeqp3R+qg10=",
-        "EXPO_PUBLIC_IMAGEKIT_PRIVATE_KEY": "private_cXQ1caIgctnU1jkoCEb3nYmQlgQ="
       }
     },
     "production": {
       "android": {
         "buildType": "apk"
-      },
-      "env": {
-        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyBoL0gZpU3f9Yl14F1fqLEGjj0ZxQnCZw4",
-        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "ananya-world-1979.firebaseapp.com",
-        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "ananya-world-1979",
-        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "ananya-world-1979.firebasestorage.app",
-        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "669540818585",
-        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:669540818585:web:ef26b4f179202c71226208",
-        "EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID": "G-YTY101GQ69",
-        "EXPO_PUBLIC_IMAGEKIT_URL_ENDPOINT": "https://upload.imagekit.io/api/v1/files/upload",
-        "EXPO_PUBLIC_IMAGEKIT_PUBLIC_KEY": "public_GKBhKTnlC3b5BN0mAeqp3R+qg10=",
-        "EXPO_PUBLIC_IMAGEKIT_PRIVATE_KEY": "private_cXQ1caIgctnU1jkoCEb3nYmQlgQ="
       }
     }
   },
