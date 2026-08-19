@@ -2,6 +2,7 @@
   "expo": {
     "name": "Ananya World",
     "slug": "StaffApp",
+    "owner": "localshaadi",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/DrLogo.png",
@@ -75,6 +76,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "80d1784e-3638-4062-ba93-de60a91a38df"
+      }
     }
   }
 }
