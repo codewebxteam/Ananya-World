@@ -17,8 +17,18 @@ import { Briefcase } from 'lucide-react-native';
 
 import * as TaskManager from 'expo-task-manager';
 import * as Location from 'expo-location';
+import * as Notifications from 'expo-notifications';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
+
+// Configure foreground notification behavior with sound enabled
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+});
 
 export const LOCATION_TASK_NAME = 'background-location-task';
 
@@ -94,6 +104,28 @@ function InnerLayout() {
       return () => pulse.stop();
     }
   }, [isReady]);
+
+  // Setup Android Notification Channel with sound & vibration
+  useEffect(() => {
+    async function configureNotifications() {
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('default', {
+          name: 'Default Notifications',
+          importance: Notifications.AndroidImportance.HIGH,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#003B95',
+          sound: 'default',
+        });
+      }
+      try {
+        const { status } = await Notifications.getPermissionsAsync();
+        if (status !== 'granted') {
+          await Notifications.requestPermissionsAsync();
+        }
+      } catch (e) {}
+    }
+    configureNotifications();
+  }, []);
 
   // Keyboard visibility listener to hide BottomNav when typing
   useEffect(() => {

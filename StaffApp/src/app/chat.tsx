@@ -17,6 +17,7 @@ import * as WebBrowser from 'expo-web-browser';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import * as Sharing from 'expo-sharing';
+import * as Notifications from 'expo-notifications';
 
 // Lazy-load expo-av to avoid crash if native module isn't available (Expo Go)
 let Audio: any = null;
@@ -119,6 +120,35 @@ export default function ChatScreen() {
             const msgs: any[] = [];
             const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
             const now = Date.now();
+
+            // Trigger notification with sound for new incoming messages from other users
+            snapshot.docChanges().forEach((change) => {
+                if (change.type === 'added') {
+                    const data = change.doc.data();
+                    let msgTime = now;
+                    if (data.createdAt?.toMillis) {
+                        msgTime = data.createdAt.toMillis();
+                    } else if (data.createdAt?.seconds) {
+                        msgTime = data.createdAt.seconds * 1000;
+                    }
+                    
+                    const isRecent = Math.abs(now - msgTime) < 20000;
+                    const storedEmpId = globalChatCache.userData?.empId || userData?.empId;
+                    const isOtherUser = data.authorId !== storedEmpId && data.author !== (globalChatCache.userData?.name || userData?.name);
+
+                    if (isRecent && isOtherUser) {
+                        Notifications.scheduleNotificationAsync({
+                            content: {
+                                title: data.author ? `Message from ${data.author}` : "New Message",
+                                body: data.text || (data.attachments?.length ? "Sent an attachment 📎" : "New message received"),
+                                sound: true,
+                                data: { roomId: data.roomId },
+                            },
+                            trigger: null,
+                        }).catch(() => {});
+                    }
+                }
+            });
 
             snapshot.forEach((docSnap) => {
                 const data = docSnap.data();
