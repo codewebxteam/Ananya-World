@@ -23,13 +23,7 @@ import Constants from 'expo-constants';
 const isExpoGo = Constants.executionEnvironment === 'storeClient';
 const Notifications: any = !isExpoGo ? require('expo-notifications') : null;
 
-// Lazy-load expo-av to avoid crash if native module isn't available (Expo Go)
-let Audio: any = null;
-try {
-    Audio = require('expo-av').Audio;
-} catch (_) {
-    // expo-av not available in this runtime
-}
+import * as ExpoAudio from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc, doc, increment, deleteDoc, setDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
@@ -56,9 +50,9 @@ export default function ChatScreen() {
     const [isUploading, setIsUploading] = useState(false);
     const [downloadingUrl, setDownloadingUrl] = useState<string | null>(null);
 
-    // Voice recording states
+    // Voice recording states and hook
+    const recorder = ExpoAudio.useAudioRecorder(ExpoAudio.RecordingPresets.HIGH_QUALITY);
     const [isRecording, setIsRecording] = useState(false);
-    const [recordingInstance, setRecordingInstance] = useState<any>(null);
     const [recordingDuration, setRecordingDuration] = useState(0);
     const recordingTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -83,6 +77,17 @@ export default function ChatScreen() {
     
     const scrollViewRef = useRef<ScrollView>(null);
     const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+
+    // Release player resources when component unmounts to prevent leaks
+    useEffect(() => {
+        return () => {
+            if (playbackSound) {
+                try {
+                    playbackSound.release();
+                } catch (_) {}
+            }
+        };
+    }, [playbackSound]);
 
     useEffect(() => {
         const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -411,22 +416,17 @@ export default function ChatScreen() {
 
     // Voice Recording
     const handleVoiceRecord = async () => {
-        if (!Audio) {
-            Alert.alert('Not Available', 'Voice recording requires a development build. It is not supported in Expo Go.');
-            return;
-        }
-        if (isRecording && recordingInstance) {
+        if (isRecording) {
             // Stop recording
             try {
                 if (recordingTimer.current) {
                     clearInterval(recordingTimer.current);
                     recordingTimer.current = null;
                 }
-                await recordingInstance.stopAndUnloadAsync();
-                await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
-                const uri = recordingInstance.getURI();
+                await recorder.stop();
+                await ExpoAudio.AudioModule.setAudioModeAsync({ allowsRecording: false });
+                const uri = recorder.uri;
                 setIsRecording(false);
-                setRecordingInstance(null);
                 const duration = recordingDuration;
                 setRecordingDuration(0);
 
@@ -446,26 +446,22 @@ export default function ChatScreen() {
             } catch (err) {
                 console.error("Stop recording error:", err);
                 setIsRecording(false);
-                setRecordingInstance(null);
                 setRecordingDuration(0);
                 if (recordingTimer.current) clearInterval(recordingTimer.current);
             }
         } else {
             // Start recording
             try {
-                const { status } = await Audio.requestPermissionsAsync();
+                const { status } = await ExpoAudio.AudioModule.requestRecordingPermissionsAsync();
                 if (status !== 'granted') {
                     Alert.alert("Permission Required", "Microphone permission is needed to record voice messages.");
                     return;
                 }
-                await Audio.setAudioModeAsync({
-                    allowsRecordingIOS: true,
-                    playsInSilentModeIOS: true,
+                await ExpoAudio.AudioModule.setAudioModeAsync({
+                    allowsRecording: true,
+                    playsInSilentMode: true,
                 });
-                const { recording } = await Audio.Recording.createAsync(
-                    Audio.RecordingOptionsPresets.HIGH_QUALITY
-                );
-                setRecordingInstance(recording);
+                await recorder.record();
                 setIsRecording(true);
                 setRecordingDuration(0);
                 setShowAttachments(false);
@@ -482,70 +478,62 @@ export default function ChatScreen() {
     };
 
     const cancelRecording = async () => {
-        if (recordingInstance) {
-            try {
-                if (recordingTimer.current) {
-                    clearInterval(recordingTimer.current);
-                    recordingTimer.current = null;
-                }
-                await recordingInstance.stopAndUnloadAsync();
-                await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
-            } catch (_) {}
-            setIsRecording(false);
-            setRecordingInstance(null);
-            setRecordingDuration(0);
-        }
+        try {
+            if (recordingTimer.current) {
+                clearInterval(recordingTimer.current);
+                recordingTimer.current = null;
+            }
+            await recorder.stop();
+            await ExpoAudio.AudioModule.setAudioModeAsync({ allowsRecording: false });
+        } catch (_) {}
+        setIsRecording(false);
+        setRecordingDuration(0);
     };
 
     // Voice Playback
     const handlePlayVoice = async (url: string) => {
-        if (!Audio) {
-            Alert.alert('Not Available', 'Audio playback requires a development build. It is not supported in Expo Go.');
-            return;
-        }
         try {
             // If already playing this URL, toggle pause/play
             if (playingUrl === url && playbackSound) {
-                const status = await playbackSound.getStatusAsync();
-                if (status.isLoaded && status.isPlaying) {
-                    await playbackSound.pauseAsync();
+                if (playbackSound.playing) {
+                    playbackSound.pause();
                     return;
-                } else if (status.isLoaded) {
-                    await playbackSound.playAsync();
+                } else {
+                    playbackSound.play();
                     return;
                 }
             }
 
-            // Stop any currently playing sound
+            // Stop and release any currently playing sound
             if (playbackSound) {
-                await playbackSound.unloadAsync();
+                playbackSound.release();
                 setPlaybackSound(null);
                 setPlayingUrl(null);
                 setPlaybackProgress(0);
             }
 
-            await Audio.setAudioModeAsync({
-                allowsRecordingIOS: false,
-                playsInSilentModeIOS: true,
+            await ExpoAudio.AudioModule.setAudioModeAsync({
+                allowsRecording: false,
+                playsInSilentMode: true,
             });
 
-            const { sound } = await Audio.Sound.createAsync(
-                { uri: url },
-                { shouldPlay: true },
-                (status: any) => {
-                    if (status.isLoaded) {
-                        setPlaybackProgress(status.positionMillis || 0);
-                        setPlaybackDuration(status.durationMillis || 0);
-                        if (status.didJustFinish) {
-                            setPlayingUrl(null);
-                            setPlaybackProgress(0);
-                            sound.unloadAsync();
-                            setPlaybackSound(null);
-                        }
-                    }
+            // Create modern player using createAudioPlayer
+            const player = ExpoAudio.createAudioPlayer(url);
+            
+            // Add progress listener
+            player.addListener('playbackStatusUpdate', (status) => {
+                setPlaybackProgress((status.currentTime || 0) * 1000);
+                setPlaybackDuration((status.duration || 0) * 1000);
+                if (status.didJustFinish) {
+                    setPlayingUrl(null);
+                    setPlaybackProgress(0);
+                    player.release();
+                    setPlaybackSound(null);
                 }
-            );
-            setPlaybackSound(sound);
+            });
+
+            player.play();
+            setPlaybackSound(player);
             setPlayingUrl(url);
         } catch (err) {
             console.error("Playback error:", err);
