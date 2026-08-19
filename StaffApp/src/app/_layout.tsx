@@ -17,18 +17,26 @@ import { Briefcase } from 'lucide-react-native';
 
 import * as TaskManager from 'expo-task-manager';
 import * as Location from 'expo-location';
-import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
-// Configure foreground notification behavior with sound enabled
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
+// Only load expo-notifications in production/dev builds (NOT in Expo Go)
+const isExpoGo = Constants.executionEnvironment === 'storeClient';
+let Notifications: any = null;
+if (!isExpoGo) {
+  Notifications = require('expo-notifications');
+  // Configure foreground notification behavior with sound enabled
+  Notifications?.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+    }),
+  });
+}
 
 export const LOCATION_TASK_NAME = 'background-location-task';
 
@@ -108,21 +116,24 @@ function InnerLayout() {
   // Setup Android Notification Channel with sound & vibration
   useEffect(() => {
     async function configureNotifications() {
-      if (Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('default', {
-          name: 'Default Notifications',
-          importance: Notifications.AndroidImportance.HIGH,
-          vibrationPattern: [0, 250, 250, 250],
-          lightColor: '#003B95',
-          sound: 'default',
-        });
-      }
+      if (!Notifications) return; // Skip if not available (Expo Go)
       try {
+        if (Platform.OS === 'android') {
+          await Notifications.setNotificationChannelAsync('default', {
+            name: 'Default Notifications',
+            importance: Notifications.AndroidImportance.HIGH,
+            vibrationPattern: [0, 250, 250, 250],
+            lightColor: '#003B95',
+            sound: 'default',
+          });
+        }
         const { status } = await Notifications.getPermissionsAsync();
         if (status !== 'granted') {
           await Notifications.requestPermissionsAsync();
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn('[Notifications] Setup failed:', e);
+      }
     }
     configureNotifications();
   }, []);
@@ -159,14 +170,22 @@ function InnerLayout() {
         const isAuthPage = authPages.includes(pathname);
 
         if (isLoggedIn !== 'true' && !isAuthPage) {
-          router.replace('/login');
+          setTimeout(() => {
+            router.replace('/login');
+          }, 1);
         } else if (isLoggedIn === 'true') {
           if (status === 'Pending' && pathname !== '/pending') {
-            router.replace('/pending');
+            setTimeout(() => {
+              router.replace('/pending');
+            }, 1);
           } else if (status === 'Inactive' && pathname !== '/inactive') {
-            router.replace('/inactive');
+            setTimeout(() => {
+              router.replace('/inactive');
+            }, 1);
           } else if (status !== 'Pending' && status !== 'Inactive' && (isAuthPage || pathname === '/pending' || pathname === '/inactive')) {
-            router.replace('/');
+            setTimeout(() => {
+              router.replace('/');
+            }, 1);
           }
         }
       } catch (error) {

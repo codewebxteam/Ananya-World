@@ -121,10 +121,10 @@ export default function LoginScreen() {
           
           {/* Brand Header */}
           <View className="items-center mb-6 mt-2">
-            <View className="w-28 h-28 bg-white rounded-full items-center justify-center shadow-2xl mb-3 p-1">
+            <View className="w-36 h-36 bg-white rounded-full items-center justify-center shadow-2xl mb-3 overflow-hidden">
               <Image 
                 source={require('../../assets/images/DrLogo.png')} 
-                style={{ width: '96%', height: '96%' }} 
+                style={{ width: '140%', height: '140%' }} 
                 resizeMode="contain" 
               />
             </View>

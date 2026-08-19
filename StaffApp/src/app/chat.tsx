@@ -17,7 +17,11 @@ import * as WebBrowser from 'expo-web-browser';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import * as Sharing from 'expo-sharing';
-import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
+
+// Only load expo-notifications in production/dev builds (NOT in Expo Go)
+const isExpoGo = Constants.executionEnvironment === 'storeClient';
+const Notifications: any = !isExpoGo ? require('expo-notifications') : null;
 
 // Lazy-load expo-av to avoid crash if native module isn't available (Expo Go)
 let Audio: any = null;
@@ -137,7 +141,7 @@ export default function ChatScreen() {
                     const isOtherUser = data.authorId !== storedEmpId && data.author !== (globalChatCache.userData?.name || userData?.name);
 
                     if (isRecent && isOtherUser) {
-                        Notifications.scheduleNotificationAsync({
+                        Notifications?.scheduleNotificationAsync({
                             content: {
                                 title: data.author ? `Message from ${data.author}` : "New Message",
                                 body: data.text || (data.attachments?.length ? "Sent an attachment 📎" : "New message received"),

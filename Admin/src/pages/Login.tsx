@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
 import { Mail, Lock, LogIn, AlertCircle, Eye, EyeOff, CheckCircle } from 'lucide-react';
-import { auth } from '../services/firebase';
+import { auth, db } from '../services/firebase';
 import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 
 interface LoginProps {
   onLogin: () => void;
 }
 
 const Login: React.FC<LoginProps> = ({ onLogin }) => {
-  const [email, setEmail] = useState('admin@gmail.com');
+  const [email, setEmail] = useState('manish.tripathi0@gmail.com');
   const [password, setPassword] = useState('@Admin00');
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
@@ -25,20 +26,19 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     try {
       // Primary authentication via Firebase Auth for production security
       const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
-      if (userCredential.user.email === 'admin@gmail.com') {
+      const user = userCredential.user;
+      
+      // Fetch user role from Firestore users collection
+      const userDocRef = doc(db, 'users', user.uid);
+      const userDocSnap = await getDoc(userDocRef);
+      
+      if (userDocSnap.exists() && userDocSnap.data().role === 'admin') {
         onLogin();
         return;
       } else {
-        setError('Unauthorized access. Only admin@gmail.com is permitted.');
+        setError('Unauthorized access. Only admin accounts are permitted.');
       }
     } catch (err: any) {
-      // Secure local fallback check for development/bootstrap if user is not in Firebase Auth yet
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential' || err.code === 'auth/cannot-find-user') {
-        if (email.trim() === 'admin@gmail.com' && password === '@Admin00') {
-          onLogin();
-          return;
-        }
-      }
       let errorMessage = 'Invalid credentials. Please try again.';
       if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
         errorMessage = 'Incorrect email or password.';

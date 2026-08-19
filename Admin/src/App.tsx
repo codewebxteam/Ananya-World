@@ -30,11 +30,11 @@ function App() {
   
   // Profile Form States
   const [profileData, setProfileData] = useState<ProfileData>({
-    name: 'Admin',
-    email: 'admin@gmail.com',
+    name: 'Manish Tripathi',
+    email: 'manish.tripathi0@gmail.com',
     phone: '+91 98765 43210',
     role: 'Super Admin',
-    profilePic: 'https://ui-avatars.com/api/?name=Admin&background=DC2626&color=fff&bold=true&size=128&format=png'
+    profilePic: 'https://ui-avatars.com/api/?name=Manish+Tripathi&background=003B95&color=fff&bold=true&size=128&format=png'
   });
 
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -44,17 +44,26 @@ function App() {
 
   useEffect(() => {
     // Listen to Firebase Auth state changes
-    const unsubscribeAuth = auth.onAuthStateChanged((user) => {
-      if (user && user.email === 'admin@gmail.com') {
-        setIsAuthenticated(true);
-        localStorage.setItem('adminAuth', 'true');
-      } else {
-        const localAuth = localStorage.getItem('adminAuth');
-        if (localAuth === 'true') {
-          setIsAuthenticated(true);
-        } else {
-          setIsAuthenticated(false);
+    const unsubscribeAuth = auth.onAuthStateChanged(async (user) => {
+      if (user) {
+        try {
+          const userDocRef = doc(db, 'users', user.uid);
+          const userDocSnap = await getDoc(userDocRef);
+          if (userDocSnap.exists() && userDocSnap.data().role === 'admin') {
+            setIsAuthenticated(true);
+            localStorage.setItem('adminAuth', 'true');
+            return;
+          }
+        } catch (e) {
+          console.error("Error verifying admin role:", e);
         }
+      }
+      
+      const localAuth = localStorage.getItem('adminAuth');
+      if (localAuth === 'true') {
+        setIsAuthenticated(true);
+      } else {
+        setIsAuthenticated(false);
       }
     });
     return () => unsubscribeAuth();
@@ -70,27 +79,14 @@ function App() {
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
           const data = docSnap.data() as ProfileData;
-          if (data.email === 'admin@ananyaworld.com' || data.name === 'Admin User') {
-            const upgradedProfile = {
-              ...data,
-              name: data.name === 'Admin User' ? 'Admin' : data.name,
-              email: data.email === 'admin@ananyaworld.com' ? 'admin@gmail.com' : data.email,
-              profilePic: data.profilePic.includes('EFF6FF') || data.profilePic.includes('1D4ED8')
-                ? 'https://ui-avatars.com/api/?name=Admin&background=DC2626&color=fff&bold=true&size=128&format=png'
-                : data.profilePic
-            };
-            await setDoc(docRef, upgradedProfile);
-            setProfileData(upgradedProfile);
-          } else {
-            setProfileData(data);
-          }
+          setProfileData(data);
         } else {
           const defaultProfile = {
-            name: 'Admin',
-            email: 'admin@gmail.com',
+            name: 'Manish Tripathi',
+            email: 'manish.tripathi0@gmail.com',
             phone: '+91 98765 43210',
             role: 'Super Admin',
-            profilePic: 'https://ui-avatars.com/api/?name=Admin&background=DC2626&color=fff&bold=true&size=128&format=png'
+            profilePic: 'https://ui-avatars.com/api/?name=Manish+Tripathi&background=003B95&color=fff&bold=true&size=128&format=png'
           };
           await setDoc(docRef, defaultProfile);
           setProfileData(defaultProfile);
