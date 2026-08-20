@@ -668,7 +668,7 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
       </div>
 
       {activeTab === 'banner' ? (
-        <div className="flex-1 bg-white rounded-2xl shadow-sm border border-gray-100 p-6 max-w-2xl mx-auto w-full mt-4 flex flex-col justify-start">
+        <div className="flex-1 bg-white rounded-2xl shadow-sm border border-gray-100 p-6 max-w-2xl mx-auto w-full mt-4 flex flex-col justify-start overflow-y-auto">
           <div className="flex items-center gap-3 mb-6 border-b border-gray-100 pb-4">
             <div className="bg-blue-50 p-2.5 rounded-xl text-blue-600">
               <Megaphone size={24} strokeWidth={2.5} />
