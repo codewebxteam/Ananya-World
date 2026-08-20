@@ -56,6 +56,88 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
   const [addMemberSearch, setAddMemberSearch] = useState('');
   const [customGroupMessageText, setCustomGroupMessageText] = useState('');
 
+  // Unread messages tracking
+  const [lastReadTimes, setLastReadTimes] = useState<Record<string, number>>(() => {
+    try {
+      const saved = localStorage.getItem('chat_last_read');
+      return saved ? JSON.parse(saved) : {};
+    } catch (_) {
+      return {};
+    }
+  });
+
+  const markAsRead = (key: string) => {
+    setLastReadTimes(prev => {
+      const updated = { ...prev, [key]: Date.now() };
+      localStorage.setItem('chat_last_read', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  useEffect(() => {
+    if (activeTab === 'group') {
+      markAsRead('group');
+      markAsRead('room_group');
+    } else if (activeTab === 'banner') {
+      markAsRead('banner');
+    } else if (activeTab === 'direct') {
+      markAsRead('direct');
+      if (selectedRoomId) {
+        markAsRead(`room_${selectedRoomId}`);
+      }
+    } else if (activeTab === 'custom') {
+      markAsRead('custom');
+      if (selectedGroupId) {
+        markAsRead(`room_custom_group_${selectedGroupId}`);
+      }
+    } else if (activeTab === 'private') {
+      markAsRead('private');
+      if (selectedRoomId) {
+        markAsRead(`room_${selectedRoomId}`);
+      }
+    }
+  }, [activeTab, selectedRoomId, selectedGroupId, messages.length]);
+
+  const getUnreadCountForRoom = (roomId: string, lastReadTimeKey: string) => {
+    const lastRead = lastReadTimes[lastReadTimeKey] || 0;
+    return messages.filter(msg => {
+      if (msg.roomId !== roomId) return false;
+      if (msg.authorId === 'admin') return false; // Ignore our own messages
+      
+      const msgTime = msg.createdAt?.toMillis 
+        ? msg.createdAt.toMillis() 
+        : (msg.createdAt?.seconds ? msg.createdAt.seconds * 1000 : Date.now());
+        
+      return msgTime > lastRead;
+    }).length;
+  };
+
+  const getCustomGroupsUnreadTotal = () => {
+    let total = 0;
+    customGroups.forEach(group => {
+      total += getUnreadCountForRoom(`custom_group_${group.id}`, `room_custom_group_${group.id}`);
+    });
+    return total;
+  };
+
+  const getDirectChatsUnreadTotal = () => {
+    let total = 0;
+    const directRooms = privateRooms.filter(room => room.userB === 'admin' || room.roomId.startsWith('private_admin_'));
+    directRooms.forEach(room => {
+      total += getUnreadCountForRoom(room.roomId, `room_${room.roomId}`);
+    });
+    return total;
+  };
+
+  const getPrivateMonitorUnreadTotal = () => {
+    let total = 0;
+    const observerRooms = privateRooms.filter(room => room.userB !== 'admin' && !room.roomId.startsWith('private_admin_'));
+    observerRooms.forEach(room => {
+      total += getUnreadCountForRoom(room.roomId, `room_${room.roomId}`);
+    });
+    return total;
+  };
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const privateMessagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -593,6 +675,11 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
 
   const groupMessages = messages.filter(msg => msg.roomId === 'group' || !msg.roomId);
 
+  const groupUnread = getUnreadCountForRoom('group', 'room_group');
+  const privateUnread = getPrivateMonitorUnreadTotal();
+  const directUnread = getDirectChatsUnreadTotal();
+  const customUnread = getCustomGroupsUnreadTotal();
+
   return (
     <div className="flex flex-col flex-1 h-full w-full max-w-[1400px] mx-auto min-h-0 animate-in fade-in duration-300">
       
@@ -607,7 +694,12 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
           }`}
         >
           <Users size={14} />
-          Group Chat
+          <span>Group Chat</span>
+          {groupUnread > 0 && (
+            <span className="ml-1 bg-red-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 min-w-[16px] text-center">
+              {groupUnread}
+            </span>
+          )}
         </button>
         <button
           onClick={() => {
@@ -621,7 +713,12 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
           }`}
         >
           <Lock size={14} />
-          Private Monitor
+          <span>Private Monitor</span>
+          {privateUnread > 0 && (
+            <span className="ml-1 bg-red-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 min-w-[16px] text-center">
+              {privateUnread}
+            </span>
+          )}
         </button>
         <button
           onClick={() => {
@@ -635,7 +732,12 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
           }`}
         >
           <MessageCircle size={14} />
-          Personal Chats
+          <span>Personal Chats</span>
+          {directUnread > 0 && (
+            <span className="ml-1 bg-red-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 min-w-[16px] text-center">
+              {directUnread}
+            </span>
+          )}
         </button>
         <button
           onClick={() => {
@@ -649,7 +751,7 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
           }`}
         >
           <Megaphone size={14} />
-          Banner
+          <span>Banner</span>
         </button>
         <button
           onClick={() => {
@@ -663,7 +765,12 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
           }`}
         >
           <Users size={14} />
-          Custom Groups
+          <span>Custom Groups</span>
+          {customUnread > 0 && (
+            <span className="ml-1 bg-red-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 min-w-[16px] text-center">
+              {customUnread}
+            </span>
+          )}
         </button>
       </div>
 
@@ -971,6 +1078,7 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
                   }).map((room) => {
                     const isSelected = selectedRoomId === room.roomId;
                     const time = room.lastMessageAt ? new Date(room.lastMessageAt.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+                    const unreadCount = getUnreadCountForRoom(room.roomId, `room_${room.roomId}`);
                     return (
                       <button
                         key={room.id}
@@ -993,7 +1101,14 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
                               <span className="text-[9px] text-gray-400 font-semibold">{room.userABranch || 'Field Operations'}</span>
                             </div>
                           </div>
-                          <span className="text-[9px] text-gray-400 shrink-0 font-medium mt-0.5">{time}</span>
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            <span className="text-[9px] text-gray-400 font-medium mt-0.5">{time}</span>
+                            {unreadCount > 0 && (
+                              <span className="bg-red-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 min-w-[16px] text-center">
+                                {unreadCount}
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <p className="text-[11px] text-gray-500 truncate w-full italic pl-9">
                           {room.lastMessage || 'No messages'}
@@ -1177,6 +1292,7 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
                 customGroups.map(group => {
                   const isSelected = selectedGroupId === group.id;
                   const lastMsg = messages.filter(m => m.roomId === `custom_group_${group.id}`).slice(-1)[0];
+                  const unreadCount = getUnreadCountForRoom(`custom_group_${group.id}`, `room_custom_group_${group.id}`);
                   return (
                     <button
                       key={group.id}
@@ -1189,7 +1305,14 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
                       <div className="flex-1 min-w-0">
                         <div className="flex justify-between items-center">
                           <span className="font-extrabold text-gray-900 text-[13px] truncate">{group.name}</span>
-                          <span className="text-[9px] text-gray-400 shrink-0 ml-2">{group.members?.length || 0} members</span>
+                          <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                            {unreadCount > 0 && (
+                              <span className="bg-red-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 min-w-[16px] text-center">
+                                {unreadCount}
+                              </span>
+                            )}
+                            <span className="text-[9px] text-gray-400 font-semibold">{group.members?.length || 0} members</span>
+                          </div>
                         </div>
                         <p className="text-[11px] text-gray-500 truncate italic mt-0.5">
                           {lastMsg?.text || 'No messages yet'}
