@@ -39,6 +39,19 @@ const Header: React.FC<HeaderProps> = ({
     return () => clearInterval(timer);
   }, []);
 
+  const getGreeting = () => {
+    const hour = currentTime.getHours();
+    if (hour < 12) {
+      return 'Good Morning';
+    } else if (hour < 17) {
+      return 'Good Afternoon';
+    } else if (hour < 21) {
+      return 'Good Evening';
+    } else {
+      return 'Good Night';
+    }
+  };
+
   // Close dropdown on click outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -113,7 +126,7 @@ const Header: React.FC<HeaderProps> = ({
       <div className={`${isChatTab ? 'hidden md:flex mb-4' : 'flex'} flex-col md:flex-row md:items-center justify-between gap-4 mb-8`}>
         <div>
           <h1 className="text-2xl lg:text-[28px] font-extrabold text-gray-900 flex items-center gap-2 mb-1">
-            Good Morning, {profileData.name.split(' ')[0]} <span className="text-2xl">👋</span>
+            {getGreeting()}, {profileData.name.split(' ')[0]} Sir <span className="text-2xl">👋</span>
           </h1>
           <p className="text-gray-500 text-sm font-medium">Here's what's happening with your team today.</p>
         </div>
