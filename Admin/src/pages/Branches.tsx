@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Building, MapPin, Plus, Loader2 } from 'lucide-react';
-import { collection, addDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, onSnapshot, updateDoc, doc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
 export default function Branches() {
   const [branches, setBranches] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAdding, setIsAdding] = useState(false);
+  const [editingBranch, setEditingBranch] = useState<any | null>(null);
   
   // Form State
   const [name, setName] = useState('');
@@ -27,6 +28,39 @@ export default function Branches() {
     return () => unsubscribe();
   }, []);
 
+  const handleEditClick = (branch: any) => {
+    setEditingBranch(branch);
+    setName(branch.name);
+    setAddress(branch.address);
+    setLatitude(branch.latitude ? String(branch.latitude) : '');
+    setLongitude(branch.longitude ? String(branch.longitude) : '');
+    setRadius(branch.radius ? String(branch.radius) : '100');
+    setIsAdding(true);
+    setError('');
+  };
+
+  const handleAddNewClick = () => {
+    setEditingBranch(null);
+    setName('');
+    setAddress('');
+    setLatitude('');
+    setLongitude('');
+    setRadius('100');
+    setIsAdding(true);
+    setError('');
+  };
+
+  const handleCancel = () => {
+    setName('');
+    setAddress('');
+    setLatitude('');
+    setLongitude('');
+    setRadius('100');
+    setEditingBranch(null);
+    setIsAdding(false);
+    setError('');
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !address || !latitude || !longitude || !radius) return;
@@ -35,22 +69,35 @@ export default function Branches() {
     setError('');
     
     try {
-      await addDoc(collection(db, 'branches'), {
-        name,
-        address,
-        latitude: parseFloat(latitude),
-        longitude: parseFloat(longitude),
-        radius: parseInt(radius, 10),
-        createdAt: serverTimestamp()
-      });
+      if (editingBranch) {
+        // Edit Branch in Firestore
+        await updateDoc(doc(db, 'branches', editingBranch.id), {
+          name,
+          address,
+          latitude: parseFloat(latitude),
+          longitude: parseFloat(longitude),
+          radius: parseInt(radius, 10)
+        });
+      } else {
+        // Add Branch in Firestore
+        await addDoc(collection(db, 'branches'), {
+          name,
+          address,
+          latitude: parseFloat(latitude),
+          longitude: parseFloat(longitude),
+          radius: parseInt(radius, 10),
+          createdAt: serverTimestamp()
+        });
+      }
       setName('');
       setAddress('');
       setLatitude('');
       setLongitude('');
       setRadius('100');
+      setEditingBranch(null);
       setIsAdding(false);
     } catch (err: any) {
-      setError(err.message || 'Error adding branch.');
+      setError(err.message || 'Error saving branch.');
     } finally {
       setSubmitting(false);
     }
@@ -65,7 +112,7 @@ export default function Branches() {
         </div>
         {!isAdding && (
           <button 
-            onClick={() => setIsAdding(true)}
+            onClick={handleAddNewClick}
             className="bg-[#2563EB] hover:bg-blue-700 text-white px-4 py-2.5 rounded-xl font-medium text-sm flex items-center gap-2 transition-colors shadow-sm"
           >
             <Plus size={18} strokeWidth={2.5} />
@@ -78,7 +125,7 @@ export default function Branches() {
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 mb-8 animate-in slide-in-from-top-4 duration-300">
           <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
             <Building className="text-blue-500" size={20} />
-            New Branch Details
+            {editingBranch ? 'Edit Branch Details' : 'New Branch Details'}
           </h3>
           
           {error && <p className="text-red-500 text-sm mb-4 bg-red-50 p-3 rounded-lg">{error}</p>}
@@ -156,7 +203,7 @@ export default function Branches() {
             <div className="md:col-span-2 flex justify-end gap-3 mt-2">
               <button 
                 type="button" 
-                onClick={() => setIsAdding(false)}
+                onClick={handleCancel}
                 className="px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-xl transition-colors"
               >
                 Cancel
@@ -191,6 +238,12 @@ export default function Branches() {
                 <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600 shrink-0 shadow-sm border border-blue-100/50 group-hover:scale-110 transition-transform">
                   <Building size={22} strokeWidth={2} />
                 </div>
+                <button 
+                  onClick={() => handleEditClick(branch)}
+                  className="text-xs font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg border border-blue-100 transition-colors cursor-pointer"
+                >
+                  Edit
+                </button>
               </div>
               
               <h3 className="text-lg font-bold text-gray-900 mb-1.5">{branch.name}</h3>

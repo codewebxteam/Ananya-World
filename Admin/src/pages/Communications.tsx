@@ -3,7 +3,8 @@ import {
   Search, MoreVertical, Megaphone, Pin, FileText, 
   Calendar, Paperclip, Image as ImageIcon, File, Smile, Send,
   MessageCircle, ChevronDown, ThumbsUp, MapPin, X, Video as VideoIcon,
-  Lock, Users, Plus, Settings, Trash2, UserPlus, UserMinus, ChevronRight, Edit3, Check
+  Lock, Users, Plus, Settings, Trash2, UserPlus, UserMinus, ChevronRight, Edit3, Check,
+  User, LogOut
 } from 'lucide-react';
 import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc, doc, deleteDoc, where, setDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -22,9 +23,12 @@ const getEmpIdsFromRoomId = (roomId: string) => {
 
 interface CommunicationsProps {
   branchesList?: any[];
+  profileData?: { name: string; email: string; profilePic: string };
+  setShowProfileModal?: (show: boolean) => void;
+  setShowLogoutConfirm?: (show: boolean) => void;
 }
 
-export default function Communications({ branchesList = [] }: CommunicationsProps) {
+export default function Communications({ branchesList = [], profileData, setShowProfileModal, setShowLogoutConfirm }: CommunicationsProps) {
   const [messages, setMessages] = useState<any[]>([]);
   const [messageText, setMessageText] = useState("");
   const [messageType, setMessageType] = useState('normal');
@@ -142,6 +146,72 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
   const privateMessagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const customGroupMessagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const customTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const profileDropdownRef = useRef<HTMLDivElement>(null);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+
+  // Close profile dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (profileDropdownRef.current && !profileDropdownRef.current.contains(event.target as Node)) {
+        setIsProfileOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>, type: 'normal' | 'custom') => {
+    if (type === 'normal') {
+      setMessageText(e.target.value);
+    } else {
+      setCustomGroupMessageText(e.target.value);
+    }
+    e.target.style.height = 'auto';
+    e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+  };
+
+  const renderMessageListWithDividers = (messages: any[], renderFn: (msg: any) => React.ReactNode) => {
+    let lastDateStr = '';
+    
+    return messages.map((msg, idx) => {
+      let msgDate = new Date();
+      if (msg.createdAt) {
+        if (msg.createdAt.toMillis) msgDate = msg.createdAt.toDate();
+        else if (msg.createdAt.seconds) msgDate = new Date(msg.createdAt.seconds * 1000);
+        else msgDate = new Date(msg.createdAt);
+      }
+      
+      const dateStr = msgDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+      const isNewDate = dateStr !== lastDateStr;
+      lastDateStr = dateStr;
+      
+      const today = new Date();
+      const yesterday = new Date();
+      yesterday.setDate(today.getDate() - 1);
+      
+      let displayDate = dateStr;
+      if (msgDate.toDateString() === today.toDateString()) {
+        displayDate = 'Today';
+      } else if (msgDate.toDateString() === yesterday.toDateString()) {
+        displayDate = 'Yesterday';
+      }
+      
+      return (
+        <React.Fragment key={msg.id || idx}>
+          {isNewDate && (
+            <div className="flex justify-center my-4 animate-in fade-in duration-300">
+              <div className="bg-slate-100 border border-slate-200/50 text-slate-500 text-[11px] font-bold px-3 py-1 rounded-full shadow-sm tracking-wide">
+                {displayDate}
+              </div>
+            </div>
+          )}
+          {renderFn(msg)}
+        </React.Fragment>
+      );
+    });
+  };
 
   // 1. Group Chat listener
   useEffect(() => {
@@ -683,95 +753,140 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
   return (
     <div className="flex flex-col flex-1 h-full w-full max-w-[1400px] mx-auto min-h-0 animate-in fade-in duration-300">
       
-      {/* Top Tab Bar for Admin Monitoring */}
-      <div className="flex bg-gray-150 p-1 rounded-xl gap-1.5 mb-5 w-full max-w-md border border-gray-200/40 bg-gray-200/50">
-        <button
-          onClick={() => setActiveTab('group')}
-          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-            activeTab === 'group'
-              ? 'bg-white text-blue-600 shadow-sm font-extrabold'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <Users size={14} />
-          <span>Group Chat</span>
-          {groupUnread > 0 && (
-            <span className="ml-1 bg-red-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 min-w-[16px] text-center">
-              {groupUnread}
-            </span>
-          )}
-        </button>
-        <button
-          onClick={() => {
-            setActiveTab('private');
-            setSelectedRoomId(null);
-          }}
-          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-            activeTab === 'private'
-              ? 'bg-white text-blue-600 shadow-sm font-extrabold'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <Lock size={14} />
-          <span>Private Monitor</span>
-          {privateUnread > 0 && (
-            <span className="ml-1 bg-red-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 min-w-[16px] text-center">
-              {privateUnread}
-            </span>
-          )}
-        </button>
-        <button
-          onClick={() => {
-            setActiveTab('direct');
-            setSelectedRoomId(null);
-          }}
-          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-            activeTab === 'direct'
-              ? 'bg-white text-blue-600 shadow-sm font-extrabold'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <MessageCircle size={14} />
-          <span>Personal Chats</span>
-          {directUnread > 0 && (
-            <span className="ml-1 bg-red-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 min-w-[16px] text-center">
-              {directUnread}
-            </span>
-          )}
-        </button>
-        <button
-          onClick={() => {
-            setActiveTab('banner');
-            setSelectedRoomId(null);
-          }}
-          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-            activeTab === 'banner'
-              ? 'bg-white text-blue-600 shadow-sm font-extrabold'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <Megaphone size={14} />
-          <span>Banner</span>
-        </button>
-        <button
-          onClick={() => {
-            setActiveTab('custom');
-            setSelectedRoomId(null);
-          }}
-          className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-            activeTab === 'custom'
-              ? 'bg-white text-blue-600 shadow-sm font-extrabold'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-        >
-          <Users size={14} />
-          <span>Custom Groups</span>
-          {customUnread > 0 && (
-            <span className="ml-1 bg-red-500 text-white text-[9px] font-black rounded-full px-1.5 py-0.5 min-w-[16px] text-center">
-              {customUnread}
-            </span>
-          )}
-        </button>
+      {/* Top Tab Bar + Profile — Single Row */}
+      <div className="flex items-center gap-3 mb-3">
+        <div className="flex-1 flex bg-white p-1 rounded-xl gap-1 border border-gray-200/60 shadow-sm min-w-0">
+          <button
+            onClick={() => setActiveTab('group')}
+            className={`flex-1 py-2 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              activeTab === 'group'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <Users size={13} />
+            <span>Group Chat</span>
+            {groupUnread > 0 && (
+              <span className={`ml-0.5 text-[8px] font-black rounded-full px-1.5 py-0.5 min-w-[14px] text-center ${activeTab === 'group' ? 'bg-white text-blue-600' : 'bg-red-500 text-white'}`}>
+                {groupUnread}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('private');
+              setSelectedRoomId(null);
+            }}
+            className={`flex-1 py-2 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              activeTab === 'private'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <Lock size={13} />
+            <span>Monitor</span>
+            {privateUnread > 0 && (
+              <span className={`ml-0.5 text-[8px] font-black rounded-full px-1.5 py-0.5 min-w-[14px] text-center ${activeTab === 'private' ? 'bg-white text-blue-600' : 'bg-red-500 text-white'}`}>
+                {privateUnread}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('direct');
+              setSelectedRoomId(null);
+            }}
+            className={`flex-1 py-2 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              activeTab === 'direct'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <MessageCircle size={13} />
+            <span>Personal</span>
+            {directUnread > 0 && (
+              <span className={`ml-0.5 text-[8px] font-black rounded-full px-1.5 py-0.5 min-w-[14px] text-center ${activeTab === 'direct' ? 'bg-white text-blue-600' : 'bg-red-500 text-white'}`}>
+                {directUnread}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('banner');
+              setSelectedRoomId(null);
+            }}
+            className={`flex-1 py-2 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              activeTab === 'banner'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <Megaphone size={13} />
+            <span>Banner</span>
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('custom');
+              setSelectedRoomId(null);
+            }}
+            className={`flex-1 py-2 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+              activeTab === 'custom'
+                ? 'bg-blue-600 text-white shadow-md'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <Users size={13} />
+            <span>Groups</span>
+            {customUnread > 0 && (
+              <span className={`ml-0.5 text-[8px] font-black rounded-full px-1.5 py-0.5 min-w-[14px] text-center ${activeTab === 'custom' ? 'bg-white text-blue-600' : 'bg-red-500 text-white'}`}>
+                {customUnread}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Profile Avatar */}
+        {profileData && (
+          <div className="relative shrink-0" ref={profileDropdownRef}>
+            <button
+              onClick={() => setIsProfileOpen(!isProfileOpen)}
+              className="flex items-center gap-1.5 focus:outline-none cursor-pointer"
+            >
+              <div className="w-9 h-9 rounded-full bg-yellow-100 border-2 border-white shadow-md overflow-hidden hover:ring-2 hover:ring-blue-500 transition-all">
+                <img src={profileData.profilePic} alt="Admin" className="w-full h-full object-cover" />
+              </div>
+              <ChevronDown size={12} className={`text-gray-400 transition-transform ${isProfileOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {isProfileOpen && (
+              <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-lg border border-gray-100 py-2 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="px-4 py-2 border-b border-gray-50 mb-2">
+                  <p className="text-sm font-bold text-gray-900">{profileData.name}</p>
+                  <p className="text-xs text-gray-500 truncate">{profileData.email}</p>
+                </div>
+                <button
+                  onClick={() => { setShowProfileModal?.(true); setIsProfileOpen(false); }}
+                  className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-blue-600 transition-colors"
+                >
+                  <User size={16} /> My Profile
+                </button>
+                <button
+                  onClick={() => { setShowProfileModal?.(true); setIsProfileOpen(false); }}
+                  className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-blue-600 transition-colors"
+                >
+                  <Settings size={16} /> Change Password
+                </button>
+                <div className="border-t border-gray-50 mt-2 pt-2">
+                  <button
+                    onClick={() => { setShowLogoutConfirm?.(true); setIsProfileOpen(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                  >
+                    <LogOut size={16} /> Logout
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {activeTab === 'banner' ? (
@@ -826,40 +941,40 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
         <div className="flex-1 bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col overflow-hidden min-h-0">
           
           {/* Top Search & Actions Bar */}
-          <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-white z-10 shrink-0">
-            <h2 className="text-xl font-bold text-gray-900 hidden sm:block">Team Communications</h2>
+          <div className="px-4 py-2.5 border-b border-gray-100 flex justify-between items-center bg-white z-10 shrink-0">
+            <h2 className="text-base font-bold text-gray-900 hidden sm:block">Team Communications</h2>
             <div className="flex items-center gap-4 w-full sm:w-auto justify-end">
-              <div className="relative w-full sm:w-64">
-                <Search size={18} className="absolute left-3.5 top-2.5 text-gray-400" />
+              <div className="relative w-full sm:w-56">
+                <Search size={15} className="absolute left-3 top-2 text-gray-400" />
                 <input 
                   type="text" 
                   placeholder="Search messages..." 
-                  className="w-full bg-gray-50 border border-gray-200 rounded-full pl-10 pr-4 py-2 text-sm text-gray-700 focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] transition-all"
+                  className="w-full bg-gray-50 border border-gray-200 rounded-full pl-9 pr-4 py-1.5 text-xs text-gray-700 focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] transition-all"
                 />
               </div>
             </div>
           </div>
 
           {/* Chat Messages Feed Area */}
-          <div className="flex-1 overflow-y-auto p-6 scroll-smooth custom-scrollbar bg-white relative">
+          <div className="flex-1 overflow-y-auto px-4 py-3 scroll-smooth custom-scrollbar bg-slate-50/30 relative">
             {groupMessages.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-gray-500 font-medium">No communications found.</div>
+              <div className="h-full flex items-center justify-center text-gray-400 font-medium text-sm">No communications found.</div>
             ) : (
-              groupMessages.map(renderMessage)
+              renderMessageListWithDividers(groupMessages, renderMessage)
             )}
             {isUploading && (
               <div className="text-center py-2 text-blue-500 font-semibold text-sm animate-pulse">Uploading attachment...</div>
             )}
-            <div ref={messagesEndRef} className="h-4" /> 
+            <div ref={messagesEndRef} className="h-2" /> 
           </div>
 
           {/* Bottom Message Input Area */}
-          <div className="p-2.5 sm:p-4 border-t border-gray-100 bg-white shrink-0">
+          <div className="px-3 py-2 border-t border-gray-100 bg-white shrink-0">
             
             {showEmojis && (
-                <div className="mb-2 bg-white rounded-full py-1.5 px-3 border border-gray-100 shadow-sm flex gap-2 overflow-x-auto custom-scrollbar">
+                <div className="mb-1.5 bg-white rounded-full py-1 px-3 border border-gray-100 shadow-sm flex gap-1.5 overflow-x-auto custom-scrollbar">
                     {COMMON_EMOJIS.map((emoji, index) => (
-                        <button key={index} onClick={() => setMessageText(prev => prev + emoji)} className="text-lg sm:text-xl hover:scale-110 transition-transform shrink-0">
+                        <button key={index} onClick={() => setMessageText(prev => prev + emoji)} className="text-base hover:scale-110 transition-transform shrink-0">
                             {emoji}
                         </button>
                     ))}
@@ -867,60 +982,59 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
             )}
 
             {/* Message Type Selector */}
-            <div className="flex items-center gap-2 sm:gap-3 mb-2">
-              <span className="text-xs sm:text-sm font-medium text-gray-500">Message Type</span>
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Type</span>
               <div className="relative">
                 <select 
                   value={messageType} 
                   onChange={(e) => setMessageType(e.target.value)}
-                  className="appearance-none bg-white border border-gray-200 text-gray-700 text-xs sm:text-sm font-semibold rounded-lg pl-7 sm:pl-9 pr-7 sm:pr-8 py-1 sm:py-1.5 focus:outline-none focus:border-blue-400 cursor-pointer"
+                  className="appearance-none bg-white border border-gray-200 text-gray-700 text-xs font-semibold rounded-lg pl-6 pr-6 py-1 focus:outline-none focus:border-blue-400 cursor-pointer"
                 >
-                  <option value="normal">Normal Message</option>
+                  <option value="normal">Normal</option>
                   <option value="announcement">Announcement</option>
                   <option value="notice">Notice</option>
-                  <option value="holiday notice">Holiday Notice</option>
+                  <option value="holiday notice">Holiday</option>
                 </select>
-                <MessageCircle size={14} className="absolute left-2.5 top-2 sm:top-2.5 text-gray-400 pointer-events-none" />
-                <ChevronDown size={14} className="absolute right-2 top-2 sm:top-2.5 text-gray-400 pointer-events-none" />
+                <MessageCircle size={12} className="absolute left-2 top-1.5 text-gray-400 pointer-events-none" />
+                <ChevronDown size={12} className="absolute right-1.5 top-1.5 text-gray-400 pointer-events-none" />
               </div>
             </div>
 
             {/* Input Box Wrapper */}
-            <div className="border border-gray-200 rounded-xl bg-white overflow-hidden focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-400 transition-all">
-              <textarea 
-                value={messageText}
-                onChange={(e) => setMessageText(e.target.value)}
-                placeholder="Type your message here..." 
-                className="w-full bg-transparent px-3 py-2 sm:p-3 text-sm text-gray-800 focus:outline-none resize-none min-h-[42px] sm:min-h-[56px] max-h-[120px]"
-                rows={1}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSendText();
-                  }
-                }}
-              ></textarea>
-              
-              {/* Bottom Toolbar inside Input */}
-              <div className="flex justify-between items-center px-3 py-1.5 sm:px-4 sm:py-2 bg-gray-50/50 border-t border-gray-100">
+            <div className="flex items-end gap-2">
+              <div className="flex-1 border border-gray-200 rounded-xl bg-white overflow-hidden focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-400 transition-all">
+                <textarea 
+                  ref={textareaRef}
+                  value={messageText}
+                  onChange={(e) => handleTextareaChange(e, 'normal')}
+                  placeholder="Type your message..." 
+                  className="w-full bg-transparent px-3 py-2 text-sm text-gray-800 focus:outline-none resize-none min-h-[36px] max-h-[120px]"
+                  rows={1}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendText();
+                      if (textareaRef.current) textareaRef.current.style.height = 'auto';
+                    }
+                  }}
+                ></textarea>
                 
-                {/* Attachment Icons */}
-                <div className="flex items-center gap-1">
-                  <button onClick={() => fileInputRef.current?.click()} className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"><Paperclip size={18} strokeWidth={2} /></button>
-                  <button onClick={() => fileInputRef.current?.click()} className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"><ImageIcon size={18} strokeWidth={2} /></button>
-                  <button onClick={() => setShowEmojis(!showEmojis)} className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"><Smile size={18} strokeWidth={2} /></button>
+                {/* Bottom Toolbar inside Input */}
+                <div className="flex items-center px-2 py-1 bg-gray-50/50 border-t border-gray-100 gap-0.5">
+                  <button onClick={() => fileInputRef.current?.click()} className="p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-md transition-colors"><Paperclip size={16} strokeWidth={2} /></button>
+                  <button onClick={() => fileInputRef.current?.click()} className="p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-md transition-colors"><ImageIcon size={16} strokeWidth={2} /></button>
+                  <button onClick={() => setShowEmojis(!showEmojis)} className="p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-md transition-colors"><Smile size={16} strokeWidth={2} /></button>
                 </div>
-                
-                {/* Send Button */}
-                <button 
-                  onClick={handleSendText} 
-                  disabled={!messageText.trim()}
-                  className={`px-3.5 py-1.5 sm:px-5 sm:py-2 rounded-lg font-bold text-xs sm:text-sm flex items-center gap-1.5 transition-colors shadow-sm ${!messageText.trim() ? 'bg-gray-300 text-white cursor-not-allowed' : 'bg-[#2563EB] hover:bg-blue-700 text-white shadow-blue-200'}`}
-                >
-                  <Send size={14} strokeWidth={2.5} className="ml-0.5" />
-                  Send
-                </button>
               </div>
+              
+              {/* Send Button */}
+              <button 
+                onClick={() => { handleSendText(); if (textareaRef.current) textareaRef.current.style.height = 'auto'; }}
+                disabled={!messageText.trim()}
+                className={`p-2.5 rounded-xl transition-all duration-200 shadow-sm shrink-0 ${!messageText.trim() ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-[#2563EB] hover:bg-blue-700 text-white shadow-blue-200 hover:shadow-md'}`}
+              >
+                <Send size={18} strokeWidth={2.5} />
+              </button>
             </div>
           </div>
         </div>
@@ -1022,7 +1136,7 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
                   {selectedRoomMessages.length === 0 ? (
                     <div className="h-full flex items-center justify-center text-gray-400 text-xs font-semibold">No messages in this chat.</div>
                   ) : (
-                    selectedRoomMessages.map(renderPrivateMessage)
+                    renderMessageListWithDividers(selectedRoomMessages, renderPrivateMessage)
                   )}
                   <div ref={privateMessagesEndRef} />
                 </div>
@@ -1193,7 +1307,7 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
                       {selectedRoomMessages.length === 0 ? (
                         <div className="h-full flex items-center justify-center text-gray-400 text-xs font-semibold">No messages in this chat. Start typing below!</div>
                       ) : (
-                        selectedRoomMessages.map(renderPrivateMessage)
+                        renderMessageListWithDividers(selectedRoomMessages, renderPrivateMessage)
                       )}
                       {isUploading && (
                         <div className="text-center py-2.5 text-blue-600 font-bold text-xs animate-pulse bg-blue-50/80 rounded-xl border border-blue-100 mt-2">
@@ -1215,38 +1329,36 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
                           </div>
                       )}
 
-                    <div className="border border-gray-200 rounded-xl bg-white overflow-hidden focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-400 transition-all">
-                      <textarea 
-                        value={messageText}
-                        onChange={(e) => setMessageText(e.target.value)}
-                        placeholder="Type a personal message..." 
-                        className="w-full bg-transparent px-3 py-2 text-sm text-gray-800 focus:outline-none resize-none min-h-[42px] max-h-[120px]"
-                        rows={1}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            handleSendText();
-                          }
-                        }}
-                      />
-                      
-                      <div className="flex justify-between items-center px-4 py-2 bg-gray-50/50 border-t border-gray-100">
-                        <div className="flex items-center gap-1">
-                          <button onClick={() => fileInputRef.current?.click()} className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"><Paperclip size={18} /></button>
-                          <button onClick={() => fileInputRef.current?.click()} className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"><ImageIcon size={18} /></button>
-                          <button onClick={() => setShowEmojis(!showEmojis)} className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"><Smile size={18} /></button>
-                        </div>
-                          
-                          <button 
-                            onClick={handleSendText} 
-                            disabled={!messageText.trim()}
-                            className={`px-5 py-2 rounded-lg font-bold text-sm flex items-center gap-1.5 transition-colors shadow-sm ${!messageText.trim() ? 'bg-gray-300 text-white cursor-not-allowed' : 'bg-[#2563EB] hover:bg-blue-700 text-white shadow-blue-200'}`}
-                          >
-                            <Send size={14} strokeWidth={2.5} />
-                            Send
-                          </button>
+                    <div className="flex items-end gap-2">
+                      <div className="flex-1 border border-gray-200 rounded-xl bg-white overflow-hidden focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-400 transition-all">
+                        <textarea 
+                          value={messageText}
+                          onChange={(e) => handleTextareaChange(e, 'normal')}
+                          placeholder="Type a personal message..." 
+                          className="w-full bg-transparent px-3 py-2 text-sm text-gray-800 focus:outline-none resize-none min-h-[36px] max-h-[120px]"
+                          rows={1}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              handleSendText();
+                            }
+                          }}
+                        />
+                        
+                        <div className="flex items-center px-2 py-1 bg-gray-50/50 border-t border-gray-100 gap-0.5">
+                          <button onClick={() => fileInputRef.current?.click()} className="p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-md transition-colors"><Paperclip size={16} /></button>
+                          <button onClick={() => fileInputRef.current?.click()} className="p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-md transition-colors"><ImageIcon size={16} /></button>
+                          <button onClick={() => setShowEmojis(!showEmojis)} className="p-1 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-md transition-colors"><Smile size={16} /></button>
                         </div>
                       </div>
+                      <button 
+                        onClick={handleSendText} 
+                        disabled={!messageText.trim()}
+                        className={`p-2.5 rounded-xl transition-all duration-200 shadow-sm shrink-0 ${!messageText.trim() ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-[#2563EB] hover:bg-blue-700 text-white shadow-blue-200 hover:shadow-md'}`}
+                      >
+                        <Send size={18} strokeWidth={2.5} />
+                      </button>
+                    </div>
                     </div>
                   </>
                 ) : (
@@ -1482,11 +1594,11 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
                         </div>
                       </div>
                     ) : (
-                      selectedGroupMessages.map(msg => {
+                      renderMessageListWithDividers(selectedGroupMessages, (msg) => {
                         const time = msg.createdAt?.toDate ? msg.createdAt.toDate().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '';
                         const isAdmin = msg.authorId === 'admin';
                         return (
-                          <div key={msg.id} className={`flex gap-3 ${isAdmin ? 'flex-row-reverse' : ''}`}>
+                          <div className={`flex gap-3 ${isAdmin ? 'flex-row-reverse' : ''}`}>
                             {!isAdmin && (
                               <img
                                 src={msg.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(msg.author)}&background=EFF6FF&color=1D4ED8`}
@@ -1519,30 +1631,39 @@ export default function Communications({ branchesList = [] }: CommunicationsProp
 
                   {/* Message Input */}
                   <div className="p-4 border-t border-gray-100 bg-white shrink-0">
-                    <div className="border border-gray-200 rounded-xl bg-white overflow-hidden focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-400 transition-all">
-                      <textarea
-                        value={customGroupMessageText}
-                        onChange={e => setCustomGroupMessageText(e.target.value)}
-                        placeholder="Type a message..."
-                        className="w-full bg-transparent px-3 py-2 text-sm text-gray-800 focus:outline-none resize-none min-h-[42px] max-h-[120px]"
-                        rows={1}
-                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendCustomGroupMessage(customGroupMessageText); }}}
-                      />
-                      <div className="flex items-center justify-between px-3 py-2 bg-gray-50/50">
-                        <button
-                          onClick={() => fileInputRef.current?.click()}
-                          className="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors cursor-pointer"
-                        >
-                          <Paperclip size={16} />
-                        </button>
-                        <button
-                          onClick={() => handleSendCustomGroupMessage(customGroupMessageText)}
-                          disabled={!customGroupMessageText.trim()}
-                          className={`px-4 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 transition-colors shadow-sm ${!customGroupMessageText.trim() ? 'bg-gray-300 text-white cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'}`}
-                        >
-                          <Send size={14} /> Send
-                        </button>
+                    <div className="flex items-end gap-2">
+                      <div className="flex-1 border border-gray-200 rounded-xl bg-white overflow-hidden focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-400 transition-all">
+                        <textarea
+                          ref={customTextareaRef}
+                          value={customGroupMessageText}
+                          onChange={e => handleTextareaChange(e, 'custom')}
+                          placeholder="Type a message..."
+                          className="w-full bg-transparent px-3 py-2 text-sm text-gray-800 focus:outline-none resize-none min-h-[36px] max-h-[120px]"
+                          rows={1}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              handleSendCustomGroupMessage(customGroupMessageText);
+                              if (customTextareaRef.current) customTextareaRef.current.style.height = 'auto';
+                            }
+                          }}
+                        />
+                        <div className="flex items-center px-2 py-1 bg-gray-50/50 border-t border-gray-100 gap-0.5">
+                          <button
+                            onClick={() => fileInputRef.current?.click()}
+                            className="p-1 text-gray-400 hover:text-blue-600 rounded-md hover:bg-blue-50 transition-colors cursor-pointer"
+                          >
+                            <Paperclip size={16} />
+                          </button>
+                        </div>
                       </div>
+                      <button
+                        onClick={() => { handleSendCustomGroupMessage(customGroupMessageText); if (customTextareaRef.current) customTextareaRef.current.style.height = 'auto'; }}
+                        disabled={!customGroupMessageText.trim()}
+                        className={`p-2.5 rounded-xl transition-all duration-200 shadow-sm shrink-0 ${!customGroupMessageText.trim() ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer hover:shadow-md'}`}
+                      >
+                        <Send size={18} />
+                      </button>
                     </div>
                   </div>
                 </>

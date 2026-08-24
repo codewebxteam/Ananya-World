@@ -122,63 +122,65 @@ const Header: React.FC<HeaderProps> = ({
         />
       )}
 
-      {/* Desktop Header Content (rendered inside Main Content Area in App.tsx) */}
-      <div className={`${isChatTab ? 'hidden md:flex mb-4' : 'flex'} flex-col md:flex-row md:items-center justify-between gap-4 mb-8`}>
-        <div>
-          <h1 className="text-2xl lg:text-[28px] font-extrabold text-gray-900 flex items-center gap-2 mb-1">
-            {getGreeting()}, {profileData.name.split(' ')[0]} Sir <span className="text-2xl">👋</span>
-          </h1>
-          <p className="text-gray-500 text-sm font-medium">Here's what's happening with your team today.</p>
-        </div>
-
-        <div className="flex items-center gap-4 lg:gap-6 self-start md:self-auto">
-          {/* Branch Switcher */}
-          <div className="relative">
-            <div className="flex items-center bg-white border border-gray-200 rounded-xl px-3 py-2 shadow-sm">
-              <Building2 size={18} className="text-blue-500 mr-2" />
-              <select
-                value={selectedBranchId}
-                onChange={(e) => setSelectedBranchId(e.target.value)}
-                className="bg-transparent text-sm font-semibold text-gray-700 focus:outline-none cursor-pointer appearance-none pr-6 w-32 md:w-48 truncate"
-              >
-                <option value="all">All Branches</option>
-                {branchesList.map(branch => (
-                  <option key={branch.id} value={branch.id}>{branch.name}</option>
-                ))}
-              </select>
-              <ChevronDown size={14} className="absolute right-3 top-3.5 text-gray-400 pointer-events-none" />
-            </div>
+      {/* Desktop Header Content */}
+      {isChatTab ? null : (
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+          <div>
+            <h1 className="text-2xl lg:text-[28px] font-extrabold text-gray-900 flex items-center gap-2 mb-1">
+              {getGreeting()}, {profileData.name.split(' ')[0]} Sir <span className="text-2xl">👋</span>
+            </h1>
+            <p className="text-gray-500 text-sm font-medium">Here's what's happening with your team today.</p>
           </div>
 
-          <div className="bg-white px-4 py-2.5 rounded-xl shadow-sm border border-gray-100 hidden md:flex flex-col gap-1.5">
-            <div className="flex items-center gap-2">
-              <Calendar size={15} className="text-[#2563EB]" strokeWidth={2.5} />
-              <span className="text-xs font-semibold text-gray-700">
-                {currentTime.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Clock size={15} className="text-[#2563EB]" strokeWidth={2.5} />
-              <span className="text-xs font-semibold text-gray-700">
-                {currentTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}
-              </span>
-            </div>
-          </div>
-          
-          <div className="relative" ref={dropdownRef}>
-            <button 
-              onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
-              className="flex items-center gap-2 focus:outline-none"
-            >
-              <div className="w-10 h-10 rounded-full bg-yellow-100 border border-gray-200 overflow-hidden shadow-sm hover:ring-2 hover:ring-[#2563EB] transition-all">
-                <img src={profileData.profilePic} alt="Admin" className="w-full h-full object-cover" />
+          <div className="flex items-center gap-4 lg:gap-6 self-start md:self-auto">
+            {/* Branch Switcher */}
+            <div className="relative">
+              <div className="flex items-center bg-white border border-gray-200 rounded-xl px-3 py-2 shadow-sm">
+                <Building2 size={18} className="text-blue-500 mr-2" />
+                <select
+                  value={selectedBranchId}
+                  onChange={(e) => setSelectedBranchId(e.target.value)}
+                  className="bg-transparent text-sm font-semibold text-gray-700 focus:outline-none cursor-pointer appearance-none pr-6 w-32 md:w-48 truncate"
+                >
+                  <option value="all">All Branches</option>
+                  {branchesList.map(branch => (
+                    <option key={branch.id} value={branch.id}>{branch.name}</option>
+                  ))}
+                </select>
+                <ChevronDown size={14} className="absolute right-3 top-3.5 text-gray-400 pointer-events-none" />
               </div>
-              <ChevronDown size={16} className={`text-gray-500 transition-transform ${isProfileDropdownOpen ? 'rotate-180' : ''}`} />
-            </button>
-            {isProfileDropdownOpen && <ProfileDropdown />}
+            </div>
+
+            <div className="bg-white px-4 py-2.5 rounded-xl shadow-sm border border-gray-100 hidden md:flex flex-col gap-1.5">
+              <div className="flex items-center gap-2">
+                <Calendar size={15} className="text-[#2563EB]" strokeWidth={2.5} />
+                <span className="text-xs font-semibold text-gray-700">
+                  {currentTime.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Clock size={15} className="text-[#2563EB]" strokeWidth={2.5} />
+                <span className="text-xs font-semibold text-gray-700">
+                  {currentTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                </span>
+              </div>
+            </div>
+            
+            <div className="relative" ref={dropdownRef}>
+              <button 
+                onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
+                className="flex items-center gap-2 focus:outline-none"
+              >
+                <div className="w-10 h-10 rounded-full bg-yellow-100 border border-gray-200 overflow-hidden shadow-sm hover:ring-2 hover:ring-[#2563EB] transition-all">
+                  <img src={profileData.profilePic} alt="Admin" className="w-full h-full object-cover" />
+                </div>
+                <ChevronDown size={16} className={`text-gray-500 transition-transform ${isProfileDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {isProfileDropdownOpen && <ProfileDropdown />}
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </>
   );
 };
