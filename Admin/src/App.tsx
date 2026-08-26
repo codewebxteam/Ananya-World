@@ -116,9 +116,14 @@ function App() {
       
       // Sort by createdAt descending (newest first)
       staff.sort((a, b) => {
-        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return dateB - dateA;
+        const getMs = (dateVal: any) => {
+          if (!dateVal) return 0;
+          if (typeof dateVal.toMillis === 'function') return dateVal.toMillis();
+          if (dateVal.seconds) return dateVal.seconds * 1000;
+          const parsed = new Date(dateVal).getTime();
+          return isNaN(parsed) ? 0 : parsed;
+        };
+        return getMs(b.createdAt) - getMs(a.createdAt);
       });
       
       setAllStaff(staff);

@@ -51,8 +51,7 @@ export default function Dashboard({ staffList = [], setActiveTab, branchesList =
     };
   }, []);
 
-  const approvedStaffList = staffList.filter(s => s.status !== 'Pending');
-  const totalStaff = approvedStaffList.length;
+  const totalStaff = staffList.length;
   const activeStaffList = staffList.filter(s => s.status === 'Active' || s.status === 'On Duty');
   const activeStaff = activeStaffList.length;
   

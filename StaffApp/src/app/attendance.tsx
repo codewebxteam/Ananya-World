@@ -528,7 +528,7 @@ export default function AttendanceScreen() {
     let trackingInterval: any;
 
     const performForegroundFieldTracking = async () => {
-      if (userRole !== 'Field' || !userData || !punchInTime || punchOutTime) return;
+      if (!userData || !punchInTime || punchOutTime) return;
 
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
@@ -565,7 +565,7 @@ export default function AttendanceScreen() {
       }
     };
 
-    if (userData && userRole === 'Field' && punchInTime && !punchOutTime) {
+    if (userData && punchInTime && !punchOutTime) {
       performForegroundFieldTracking();
       // Update location every 30 seconds while app is in foreground
       trackingInterval = setInterval(performForegroundFieldTracking, 30000);
@@ -763,7 +763,7 @@ export default function AttendanceScreen() {
     let pres = 0, abs = 0, lat = 0, lev = 0, totalMins = 0;
     combinedList.forEach(item => {
         if (item.status === 'Present') pres++;
-        else if (item.status === 'Late') { pres++; lat++; }
+        else if (item.status === 'Late') { lat++; }
         else if (item.status === 'Absent') abs++;
         else if (item.status === 'On Leave') lev++;
 
@@ -906,33 +906,31 @@ export default function AttendanceScreen() {
           date: today,
           punchIn: now.toISOString(),
           locationIn: fetchedAddress,
-          latitudeIn: isFieldStaff && coords ? coords.latitude : null,
-          longitudeIn: isFieldStaff && coords ? coords.longitude : null,
+          latitudeIn: coords ? coords.latitude : null,
+          longitudeIn: coords ? coords.longitude : null,
           status: 'Present',
           branchId: activeSwap ? activeSwap.originalBranchId : (userData?.branchId || '')
         });
 
-        if (isFieldStaff) {
-          try {
-            const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
-            if (bgStatus === 'granted') {
-              await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-                accuracy: Location.Accuracy.Balanced,
-                timeInterval: 20000,
-                distanceInterval: 20,
-                deferredUpdatesInterval: 20000,
-                deferredUpdatesDistance: 20,
-                showsBackgroundLocationIndicator: true,
-                foregroundService: {
-                  notificationTitle: "Live Tracking Active",
-                  notificationBody: "Your location is being tracked for duty.",
-                  notificationColor: "#138A43"
-                }
-              });
-            }
-          } catch (bgErr) {
-            console.log("Failed to start background tracking", bgErr);
+        try {
+          const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+          if (bgStatus === 'granted') {
+            await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+              accuracy: Location.Accuracy.Balanced,
+              timeInterval: 20000,
+              distanceInterval: 20,
+              deferredUpdatesInterval: 20000,
+              deferredUpdatesDistance: 20,
+              showsBackgroundLocationIndicator: true,
+              foregroundService: {
+                notificationTitle: "Live Tracking Active",
+                notificationBody: "Your location is being tracked for duty.",
+                notificationColor: "#138A43"
+              }
+            });
           }
+        } catch (bgErr) {
+          console.log("Failed to start background tracking", bgErr);
         }
 
         Alert.alert("Success", `Punch In successful at ${fetchedAddress}!`);
@@ -952,17 +950,18 @@ export default function AttendanceScreen() {
         await updateDoc(attRef, {
           punchOut: now.toISOString(),
           locationOut: fetchedAddress,
-          latitudeOut: isFieldStaff && coords ? coords.latitude : null,
-          longitudeOut: isFieldStaff && coords ? coords.longitude : null,
+          latitudeOut: coords ? coords.latitude : null,
+          longitudeOut: coords ? coords.longitude : null,
           hours: hoursStr
         });
 
-        if (isFieldStaff) {
-          try {
+        try {
+          const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
+          if (hasStarted) {
             await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
-          } catch (stopErr) {
-            console.log("Failed to stop background tracking", stopErr);
           }
+        } catch (stopErr) {
+          console.log("Failed to stop background tracking", stopErr);
         }
 
         Alert.alert("Success", "Punch Out successful!");
@@ -1135,8 +1134,8 @@ export default function AttendanceScreen() {
 
   const bannerData = getBannerDetails();
 
-  const totalDaysCalculated = (monthlyStats.present + monthlyStats.absent + monthlyStats.leave) || 1;
-  const onTimeDays = Math.max(0, monthlyStats.present - monthlyStats.late);
+  const totalDaysCalculated = (monthlyStats.present + monthlyStats.late + monthlyStats.absent + monthlyStats.leave) || 1;
+  const onTimeDays = monthlyStats.present;
   const presentPct = Math.round((onTimeDays / totalDaysCalculated) * 100);
   const absentPct = Math.round((monthlyStats.absent / totalDaysCalculated) * 100);
   const latePct = Math.round((monthlyStats.late / totalDaysCalculated) * 100);

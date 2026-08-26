@@ -55,6 +55,7 @@ let globalHomeCache: {
   holidayData: { name: string; wishMessage: string } | null;
   activeSwap: any | null;
   isNearOffice: boolean;
+  dailyBanner: { title: string; message: string } | null;
 } = {
   isLoaded: false,
   userData: null,
@@ -72,7 +73,8 @@ let globalHomeCache: {
   isCompanyHoliday: false,
   holidayData: null,
   activeSwap: null,
-  isNearOffice: true
+  isNearOffice: true,
+  dailyBanner: null
 };
 
 let homeBranchCache: { branchId: string; latitude: number; longitude: number; radius: number } | null = null;
@@ -130,7 +132,7 @@ export default function HomeScreen() {
   const [rawAttendance, setRawAttendance] = useState<any[]>(globalHomeCache.rawAttendance);
   const [isAttLoaded, setIsAttLoaded] = useState(globalHomeCache.isLoaded);
   const [isLeavesLoaded, setIsLeavesLoaded] = useState(globalHomeCache.isLoaded);
-  const [dailyBanner, setDailyBanner] = useState<{ title: string; message: string } | null>(null);
+  const [dailyBanner, setDailyBanner] = useState<{ title: string; message: string } | null>(globalHomeCache.dailyBanner);
 
   // Skeleton / Initial Load state - if globalHomeCache.isLoaded is true, initialize as FALSE so skeleton NEVER shows when switching tabs!
   const [isInitialLoading, setIsInitialLoading] = useState(!globalHomeCache.isLoaded);
@@ -313,7 +315,12 @@ export default function HomeScreen() {
             snapshot.forEach(docSnap => {
               const data = docSnap.data();
               const msgTime = data.createdAt ? (typeof data.createdAt === 'string' ? new Date(data.createdAt).getTime() : (data.createdAt.seconds ? data.createdAt.seconds * 1000 : Date.now())) : Date.now();
-              if (msgTime > lastReadTime) {
+              const isOtherUser = data.authorId !== parsed.empId;
+              const isParticipant = data.roomId === 'group' || 
+                  (data.participants && Array.isArray(data.participants) && 
+                   (data.participants.includes(parsed.empId) || data.participants.includes('all')));
+
+              if (msgTime > lastReadTime && isOtherUser && isParticipant) {
                 unread++;
               }
             });
@@ -430,14 +437,18 @@ export default function HomeScreen() {
           const docBannerRef = doc(db, 'daily_banner', 'current');
           unsubBanner = onSnapshot(docBannerRef, (docSnap) => {
             if (docSnap.exists()) {
-              setDailyBanner(docSnap.data() as any);
+              const banner = docSnap.data() as any;
+              setDailyBanner(banner);
+              globalHomeCache.dailyBanner = banner;
             } else {
-              setDailyBanner({
+              const defaultBanner = {
                 title: "Daily Update",
                 message: "Welcome to Ananya World! Mark your attendance on time."
-              });
+              };
+              setDailyBanner(defaultBanner);
+              globalHomeCache.dailyBanner = defaultBanner;
             }
-          });
+          }, (err) => console.log("Banner listener error:", err.message));
         }
       } catch (error) {
         console.error("Error initializing home screen data", error);
@@ -528,7 +539,6 @@ export default function HomeScreen() {
         const userLat = location.coords.latitude;
         const userLng = location.coords.longitude;
         const distance = calculateDistance(userLat, userLng, branchLat, branchLng);
-
         const isNear = distance <= branchRadius;
         setIsNearOffice(isNear);
         globalHomeCache.isNearOffice = isNear;
@@ -556,7 +566,7 @@ export default function HomeScreen() {
     let trackingInterval: any;
 
     const performForegroundFieldTracking = async () => {
-      if (userRole !== 'Field' || !userData || !punchInTime || punchOutTime) return;
+      if (!userData || !punchInTime || punchOutTime) return;
 
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
@@ -593,7 +603,7 @@ export default function HomeScreen() {
       }
     };
 
-    if (userData && userRole === 'Field' && punchInTime && !punchOutTime) {
+    if (userData && punchInTime && !punchOutTime) {
       performForegroundFieldTracking();
       // Update location every 30 seconds while app is in foreground
       trackingInterval = setInterval(performForegroundFieldTracking, 30000);
@@ -735,7 +745,6 @@ export default function HomeScreen() {
     combinedMap.forEach(item => {
       if (item.status === 'Present') pres++;
       else if (item.status === 'Late') { 
-        pres++; 
         lat++; 
         totalLateMinutes += (item.lateMinutes || 0);
       }
@@ -923,7 +932,6 @@ export default function HomeScreen() {
           branchId: activeSwap ? activeSwap.originalBranchId : (userData?.branchId || '')
         });
         
-        if (userRole === 'Field') {
           try {
             const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
             if (bgStatus === 'granted') {
@@ -944,7 +952,6 @@ export default function HomeScreen() {
           } catch (bgErr) {
             console.log("Failed to start background tracking", bgErr);
           }
-        }
 
         Alert.alert("Success", `Punch In successful at ${locationAddress}!`);
       } catch (error: any) {
@@ -989,13 +996,14 @@ export default function HomeScreen() {
           hours: hoursStr
         });
 
-        if (userRole === 'Field') {
           try {
-            await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+            const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
+            if (hasStarted) {
+              await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+            }
           } catch (stopErr) {
             console.log("Failed to stop background tracking", stopErr);
           }
-        }
 
         Alert.alert("Success", "Punch Out successful!");
       } catch (error: any) {

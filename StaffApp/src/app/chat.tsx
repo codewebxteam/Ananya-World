@@ -19,6 +19,8 @@ import * as MediaLibrary from 'expo-media-library/legacy';
 import * as Sharing from 'expo-sharing';
 import Constants from 'expo-constants';
 
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 // Only load expo-notifications in production/dev builds (NOT in Expo Go)
 const isExpoGo = Constants.executionEnvironment === 'storeClient';
 const Notifications: any = !isExpoGo ? require('expo-notifications') : null;
@@ -26,7 +28,7 @@ const Notifications: any = !isExpoGo ? require('expo-notifications') : null;
 import * as ExpoAudio from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc, doc, increment, deleteDoc, setDoc } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { db, auth } from '../config/firebase';
 import { uploadToImageKitWithDetails, uploadBase64ToImageKit, deleteFromImageKit } from '../utils/imagekit';
 
 const COMMON_EMOJIS = ["😀", "😂", "🥰", "😎", "🤔", "🙌", "👍", "🙏", "🔥", "💯", "🎉", "❤️"];
@@ -43,6 +45,7 @@ let globalChatCache: {
 };
 
 export default function ChatScreen() {
+    const insets = useSafeAreaInsets();
     const [showAttachments, setShowAttachments] = useState(false);
     const [showEmojis, setShowEmojis] = useState(false);
     const [messageText, setMessageText] = useState("");
@@ -67,10 +70,66 @@ export default function ChatScreen() {
     const [messages, setMessages] = useState<any[]>(globalChatCache.messages);
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
     const [staffList, setStaffList] = useState<any[]>([]);
+    const [branchesList, setBranchesList] = useState<any[]>([]);
+    const [isInputFocused, setIsInputFocused] = useState(false);
+
+    const getBranchDisplayName = (name?: string, id?: string) => {
+        if (name && name.trim()) return name;
+        if (id && id.trim()) {
+            const found = branchesList.find(b => b.id === id);
+            if (found && found.name) return found.name;
+            if (id.length === 20 && /^[a-zA-Z0-9]+$/.test(id)) {
+                return 'Other Branch';
+            }
+            return id;
+        }
+        return 'Other Branch';
+    };
     const [customGroups, setCustomGroups] = useState<any[]>([]);
     const [searchQuery, setSearchQuery] = useState("");
     const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
     const [activePartner, setActivePartner] = useState<any | null>(null);
+    const activeRoomIdRef = useRef<string | null>(null);
+
+    const [lastReadTimes, setLastReadTimes] = useState<Record<string, number>>({});
+
+    const getUnreadCount = (roomId: string) => {
+        if (activeRoomId === roomId) return 0;
+        const lastRead = lastReadTimes[roomId] || 0;
+        const roomMsgs = messages.filter(m => m.roomId === roomId);
+        return roomMsgs.filter(m => {
+            let msgTime = 0;
+            if (m.createdAt?.toMillis) {
+                msgTime = m.createdAt.toMillis();
+            } else if (m.createdAt?.seconds) {
+                msgTime = m.createdAt.seconds * 1000;
+            } else {
+                msgTime = new Date(m.createdAt).getTime();
+            }
+            const isOther = m.authorId !== userData?.empId;
+            return isOther && msgTime > lastRead;
+        }).length;
+    };
+
+    useEffect(() => {
+        if (activeRoomId) {
+            const updateRead = () => {
+                const now = Date.now();
+                setLastReadTimes(prev => {
+                    const updated = { ...prev, [activeRoomId]: now };
+                    AsyncStorage.setItem('chat_last_read_times', JSON.stringify(updated));
+                    return updated;
+                });
+            };
+            updateRead();
+            const timer = setInterval(updateRead, 5000);
+            return () => clearInterval(timer);
+        }
+    }, [activeRoomId]);
+
+    useEffect(() => {
+        activeRoomIdRef.current = activeRoomId;
+    }, [activeRoomId]);
 
     // Skeleton / Initial loading state (false if memory cache is loaded)
     const [isInitialLoading, setIsInitialLoading] = useState(!globalChatCache.isLoaded);
@@ -93,11 +152,14 @@ export default function ChatScreen() {
         const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
         const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
 
-        const showListener = Keyboard.addListener(showEvent, () => {
-            setIsKeyboardVisible(true);
-            setTimeout(() => {
-                scrollViewRef.current?.scrollToEnd({ animated: true });
-            }, 50);
+        const showListener = Keyboard.addListener(showEvent, (e) => {
+            const height = e?.endCoordinates?.height || 0;
+            if (height > 0) {
+                setIsKeyboardVisible(true);
+                setTimeout(() => {
+                    scrollViewRef.current?.scrollToEnd({ animated: true });
+                }, 50);
+            }
         });
 
         const hideListener = Keyboard.addListener(hideEvent, () => {
@@ -123,6 +185,17 @@ export default function ChatScreen() {
             }
         });
 
+        // Fetch lastReadTimes from AsyncStorage
+        AsyncStorage.getItem('chat_last_read_times').then(val => {
+            if (val) {
+                try {
+                    setLastReadTimes(JSON.parse(val));
+                } catch (e) {
+                    console.log("Error parsing chat_last_read_times", e);
+                }
+            }
+        });
+
         // Listen to Messages & Auto-Vanish messages older than 5 days
         const q = query(collection(db, 'communications'), orderBy('createdAt', 'asc'));
         const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -145,7 +218,15 @@ export default function ChatScreen() {
                     const storedEmpId = globalChatCache.userData?.empId || userData?.empId;
                     const isOtherUser = data.authorId !== storedEmpId && data.author !== (globalChatCache.userData?.name || userData?.name);
 
-                    if (isRecent && isOtherUser) {
+                    // Check if current user is a participant of this message
+                    const isParticipant = data.roomId === 'group' || 
+                        (data.participants && Array.isArray(data.participants) && 
+                         (data.participants.includes(storedEmpId) || data.participants.includes('all')));
+
+                    // Check if the chat room is NOT currently open
+                    const isRoomNotOpen = activeRoomIdRef.current !== data.roomId;
+
+                    if (isRecent && isOtherUser && isParticipant && isRoomNotOpen) {
                         Notifications?.scheduleNotificationAsync({
                             content: {
                                 title: data.author ? `Message from ${data.author}` : "New Message",
@@ -168,16 +249,9 @@ export default function ChatScreen() {
                     msgTime = data.createdAt.seconds * 1000;
                 }
 
-                // If message is older than 5 days (432,000,000 ms), auto vanish from Firestore & ImageKit
+                // If message is older than 5 days (432,000,000 ms), filter out from client view (Admin app/backend handles physical deletion)
                 if (msgTime && (now - msgTime > FIVE_DAYS_MS)) {
-                    if (data.attachments && Array.isArray(data.attachments)) {
-                        data.attachments.forEach((att: any) => {
-                            if (att.fileId) {
-                                deleteFromImageKit(att.fileId);
-                            }
-                        });
-                    }
-                    deleteDoc(doc(db, 'communications', docSnap.id)).catch(console.error);
+                    // Skip old messages on the staff app since staff does not have delete permission
                 } else {
                     msgs.push({ id: docSnap.id, ...data });
                 }
@@ -187,6 +261,8 @@ export default function ChatScreen() {
             globalChatCache.isLoaded = true;
             setIsInitialLoading(false);
             setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+        }, (error) => {
+            console.error("Communications snapshot error:", error);
         });
 
         return () => {
@@ -229,6 +305,20 @@ export default function ChatScreen() {
         });
         return () => unsubscribeGroups();
     }, [userData]);
+
+    useEffect(() => {
+        const qBranches = collection(db, 'branches');
+        const unsubscribeBranches = onSnapshot(qBranches, (snapshot) => {
+            const list: any[] = [];
+            snapshot.forEach(docSnap => {
+                list.push({ id: docSnap.id, ...docSnap.data() });
+            });
+            setBranchesList(list);
+        }, (err) => {
+            console.error("Error listening to branches:", err);
+        });
+        return () => unsubscribeBranches();
+    }, []);
 
     const sendMessage = async (text: string = "", attachments: any[] = []) => {
         if ((!text.trim() && attachments.length === 0) || !userData) return;
@@ -943,12 +1033,32 @@ export default function ChatScreen() {
         const otherBranchStaff = filteredStaff.filter(s => !s.branchId || s.branchId !== userData?.branchId)
             .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
+        const adminRoomId = `private_admin_${userData?.empId}`;
+        const adminUnreadCount = getUnreadCount(adminRoomId);
+        const teamUnreadCount = getUnreadCount('group');
+        
+        let totalUnread = adminUnreadCount + teamUnreadCount;
+        customGroups.forEach(group => {
+            totalUnread += getUnreadCount(`custom_group_${group.id}`);
+        });
+        filteredStaff.forEach(staff => {
+            const roomId = 'private_' + [userData?.empId, staff.empId].sort().join('_');
+            totalUnread += getUnreadCount(roomId);
+        });
+
         return (
-            <SafeAreaView style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
+            <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
                 <StatusBar backgroundColor="#FFFFFF" barStyle="dark-content" />
-                <View className="px-5 py-4 border-b border-gray-100 bg-white flex-row justify-between items-center" style={{ paddingTop: Platform.OS === 'android' ? 38 : 0 }}>
+                <View className="px-5 py-4 border-b border-gray-100 bg-white flex-row justify-between items-center" style={{ paddingTop: Math.max(insets.top, 12) }}>
                     <View>
-                        <Text className="text-2xl font-black text-gray-900">Messages</Text>
+                        <View className="flex-row items-center gap-2">
+                            <Text className="text-2xl font-black text-gray-900">Messages</Text>
+                            {totalUnread > 0 && (
+                                <View className="bg-red-500 rounded-full px-2 py-0.5 min-w-[20px] items-center justify-center">
+                                    <Text className="text-white text-[11px] font-black">{totalUnread}</Text>
+                                </View>
+                            )}
+                        </View>
                         <Text className="text-gray-400 text-[10px] font-bold mt-0.5">Select a staff member or group chat to message</Text>
                     </View>
                 </View>
@@ -990,9 +1100,16 @@ export default function ChatScreen() {
                             <View className="flex-1">
                                 <View className="flex-row justify-between items-center">
                                     <Text className="text-[#1E3A8A] font-extrabold text-base">Team Group Chat</Text>
-                                    <View className="flex-row items-center gap-1 bg-blue-100/50 px-2 py-0.5 rounded-full">
-                                        <Pin color="#2563EB" size={10} />
-                                        <Text className="text-[8px] font-extrabold text-blue-600 uppercase">PINNED</Text>
+                                    <View className="flex-row items-center gap-1">
+                                        {teamUnreadCount > 0 && (
+                                            <View className="bg-red-500 rounded-full px-1.5 py-0.5 min-w-[16px] items-center justify-center mr-1">
+                                                <Text className="text-white text-[9px] font-black">{teamUnreadCount}</Text>
+                                            </View>
+                                        )}
+                                        <View className="flex-row items-center gap-1 bg-blue-100/50 px-2 py-0.5 rounded-full">
+                                            <Pin color="#2563EB" size={10} />
+                                            <Text className="text-[8px] font-extrabold text-blue-600 uppercase">PINNED</Text>
+                                        </View>
                                     </View>
                                 </View>
                                 <Text className="text-blue-700/80 text-xs mt-0.5" numberOfLines={1}>Broadcast and normal messages with all staff</Text>
@@ -1021,9 +1138,16 @@ export default function ChatScreen() {
                             <View className="flex-1">
                                 <View className="flex-row justify-between items-center">
                                     <Text className="text-[#581C87] font-extrabold text-base">Chat with Admin</Text>
-                                    <View className="flex-row items-center gap-1 bg-purple-100 px-2 py-0.5 rounded-full">
-                                        <Lock color="#9333EA" size={10} />
-                                        <Text className="text-[8px] font-extrabold text-purple-700 uppercase">Personal</Text>
+                                    <View className="flex-row items-center gap-1">
+                                        {adminUnreadCount > 0 && (
+                                            <View className="bg-red-500 rounded-full px-1.5 py-0.5 min-w-[16px] items-center justify-center mr-1">
+                                                <Text className="text-white text-[9px] font-black">{adminUnreadCount}</Text>
+                                            </View>
+                                        )}
+                                        <View className="flex-row items-center gap-1 bg-purple-100 px-2 py-0.5 rounded-full">
+                                            <Lock color="#9333EA" size={10} />
+                                            <Text className="text-[8px] font-extrabold text-purple-700 uppercase">Personal</Text>
+                                        </View>
                                     </View>
                                 </View>
                                 <Text className="text-purple-700/80 text-xs mt-0.5" numberOfLines={1}>Direct 1-to-1 conversation with Administrator</Text>
@@ -1060,7 +1184,14 @@ export default function ChatScreen() {
                                             <View className="flex-1">
                                                 <View className="flex-row justify-between items-center">
                                                     <Text className="text-gray-900 font-extrabold text-sm">{group.name}</Text>
-                                                    <Text className="text-[9px] text-gray-400 font-bold">{group.members?.length || 0} members</Text>
+                                                    <View className="flex-row items-center gap-2">
+                                                        {getUnreadCount(`custom_group_${group.id}`) > 0 && (
+                                                            <View className="bg-red-500 rounded-full px-1.5 py-0.5 min-w-[16px] items-center justify-center">
+                                                                <Text className="text-white text-[9px] font-black">{getUnreadCount(`custom_group_${group.id}`)}</Text>
+                                                            </View>
+                                                        )}
+                                                        <Text className="text-[9px] text-gray-400 font-bold">{group.members?.length || 0} members</Text>
+                                                    </View>
                                                 </View>
                                                 <Text className="text-gray-500 text-[11px] mt-0.5" numberOfLines={1}>
                                                     {lastMsg?.text || (lastMsg?.attachments?.length ? '[Attachment]' : 'No messages yet')}
@@ -1078,7 +1209,7 @@ export default function ChatScreen() {
                     {myBranchStaff.length > 0 && (
                         <View className="mb-6">
                             <Text className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider mb-2">
-                                📍 My Branch Staff ({userData?.branchName || userData?.branchId || 'Same Branch'})
+                                📍 My Branch Staff ({getBranchDisplayName(userData?.branchName, userData?.branchId) || 'Same Branch'})
                             </Text>
                             <View className="bg-white rounded-2xl p-2 border border-gray-100 shadow-sm">
                                 {myBranchStaff.map((staff, idx) => (
@@ -1101,8 +1232,15 @@ export default function ChatScreen() {
                                         </View>
                                         <View className="flex-1">
                                             <Text className="text-gray-900 font-extrabold text-sm">{staff.name}</Text>
-                                            <Text className="text-gray-500 text-[10px] mt-0.5">{staff.designation || staff.staffType || 'Staff'} • ID: {staff.empId}</Text>
+                                            <Text className="text-gray-500 text-[10px] mt-0.5">{staff.designation || staff.staffType || 'Staff'}</Text>
                                         </View>
+                                        {getUnreadCount('private_' + [userData.empId, staff.empId].sort().join('_')) > 0 && (
+                                            <View className="bg-red-500 rounded-full px-1.5 py-0.5 min-w-[16px] items-center justify-center mr-1">
+                                                <Text className="text-white text-[9px] font-black">
+                                                    {getUnreadCount('private_' + [userData.empId, staff.empId].sort().join('_'))}
+                                                </Text>
+                                            </View>
+                                        )}
                                         <ChevronRight size={18} color="#9CA3AF" />
                                     </TouchableOpacity>
                                 ))}
@@ -1138,9 +1276,16 @@ export default function ChatScreen() {
                                         <View className="flex-1">
                                             <Text className="text-gray-900 font-extrabold text-sm">{staff.name}</Text>
                                             <Text className="text-gray-500 text-[10px] mt-0.5">
-                                                {staff.designation || staff.staffType || 'Staff'} • ID: {staff.empId} {staff.branchName || staff.branchId ? `(${staff.branchName || staff.branchId})` : ''}
+                                                {staff.designation || staff.staffType || 'Staff'} ({getBranchDisplayName(staff.branchName, staff.branchId)})
                                             </Text>
                                         </View>
+                                        {getUnreadCount('private_' + [userData.empId, staff.empId].sort().join('_')) > 0 && (
+                                            <View className="bg-red-500 rounded-full px-1.5 py-0.5 min-w-[16px] items-center justify-center mr-1">
+                                                <Text className="text-white text-[9px] font-black">
+                                                    {getUnreadCount('private_' + [userData.empId, staff.empId].sort().join('_'))}
+                                                </Text>
+                                            </View>
+                                        )}
                                         <ChevronRight size={18} color="#9CA3AF" />
                                     </TouchableOpacity>
                                 ))}
@@ -1154,16 +1299,16 @@ export default function ChatScreen() {
                         </View>
                     )}
                 </ScrollView>
-            </SafeAreaView>
+            </View>
         );
     }
 
     return (
         <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
             {/* Active Chat Header */}
-            <SafeAreaView style={{ backgroundColor: '#003B95' }}>
+            <View style={{ backgroundColor: '#003B95', paddingTop: Math.max(insets.top, 8) }}>
                 <StatusBar backgroundColor="#003B95" barStyle="light-content" />
-                <View className="flex-row items-center px-4 py-3 gap-3 border-b border-white/10" style={{ paddingTop: Platform.OS === 'android' ? 38 : 0 }}>
+                <View className="flex-row items-center px-4 py-3 gap-3 border-b border-white/10">
                     <TouchableOpacity 
                         onPress={() => {
                             setActiveRoomId(null);
@@ -1194,12 +1339,12 @@ export default function ChatScreen() {
                                 ? 'Broadcast and team announcements' 
                                 : activePartner?.isCustomGroup 
                                     ? `Custom Group • ${activePartner?.members?.length || 0} members`
-                                    : `${activePartner?.designation || activePartner?.staffType || 'Staff'} • ${activePartner?.branchName || activePartner?.branchId || 'Other Branch'}`
+                                    : `${activePartner?.designation || activePartner?.staffType || 'Staff'} • ${getBranchDisplayName(activePartner?.branchName, activePartner?.branchId)}`
                             }
                         </Text>
                     </View>
                 </View>
-            </SafeAreaView>
+            </View>
 
             <KeyboardAvoidingView 
                 style={{ flex: 1 }}
@@ -1220,9 +1365,49 @@ export default function ChatScreen() {
                         <View className="flex-1 items-center justify-center mt-20">
                             <Text className="text-gray-400 font-medium text-sm">No communications yet.</Text>
                         </View>
-                    ) : (
-                        roomMessages.map(renderMessage)
-                    )}
+                    ) : (() => {
+                        let lastDateStr = '';
+                        return roomMessages.map((msg, index) => {
+                            let msgDate = new Date();
+                            if (msg.createdAt) {
+                                if (msg.createdAt.toMillis) {
+                                    msgDate = msg.createdAt.toDate();
+                                } else if (msg.createdAt.seconds) {
+                                    msgDate = new Date(msg.createdAt.seconds * 1000);
+                                } else {
+                                    msgDate = new Date(msg.createdAt);
+                                }
+                            }
+                            
+                            const dateStr = msgDate.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+                            const isNewDate = dateStr !== lastDateStr;
+                            lastDateStr = dateStr;
+                            
+                            const today = new Date();
+                            const yesterday = new Date();
+                            yesterday.setDate(today.getDate() - 1);
+                            
+                            let displayDate = dateStr;
+                            if (msgDate.toDateString() === today.toDateString()) {
+                                displayDate = 'Today';
+                            } else if (msgDate.toDateString() === yesterday.toDateString()) {
+                                displayDate = 'Yesterday';
+                            }
+
+                            return (
+                                <React.Fragment key={msg.id || index}>
+                                    {isNewDate && (
+                                        <View className="items-center my-3">
+                                            <View className="bg-gray-200/50 px-3.5 py-1.5 rounded-full border border-gray-300/10 shadow-sm">
+                                                <Text className="text-gray-500 text-[10px] font-extrabold uppercase tracking-widest">{displayDate}</Text>
+                                            </View>
+                                        </View>
+                                    )}
+                                    {renderMessage(msg)}
+                                </React.Fragment>
+                            );
+                        });
+                    })()}
                 </ScrollView>
 
                 {isUploading && (
@@ -1232,19 +1417,8 @@ export default function ChatScreen() {
                 )}
 
                 {/* Bottom Input Area */}
-                <View style={{ backgroundColor: '#F8FAFC', borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 8, paddingHorizontal: 12, paddingBottom: isKeyboardVisible ? 12 : 85 }}>
-                    {/* Recording Indicator */}
-                    {isRecording && (
-                        <View className="flex-row items-center justify-between mb-2 bg-red-50 rounded-2xl px-4 py-3 border border-red-200">
-                            <View className="flex-row items-center gap-2">
-                                <View className="w-3 h-3 rounded-full bg-red-500" />
-                                <Text className="text-red-600 font-bold text-sm">Recording... {formatDuration(recordingDuration)}</Text>
-                            </View>
-                            <TouchableOpacity onPress={cancelRecording} className="bg-red-100 px-3 py-1.5 rounded-full">
-                                <Text className="text-red-600 text-xs font-bold">Cancel</Text>
-                            </TouchableOpacity>
-                        </View>
-                    )}
+                <View style={{ backgroundColor: '#F8FAFC', borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 8, paddingHorizontal: 12, paddingBottom: (isKeyboardVisible && isInputFocused) ? 12 : 140 }}>
+                    {/* Removed voice recording indicator */}
                     {/* Simple Emoji Picker */}
                     {showEmojis && (
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2 bg-white rounded-full py-2 px-3 border border-gray-100 shadow-sm max-h-12">
@@ -1282,9 +1456,13 @@ export default function ChatScreen() {
                                 value={messageText}
                                 onChangeText={setMessageText}
                                 onFocus={() => {
+                                  setIsInputFocused(true);
                                   setShowAttachments(false);
                                   setShowEmojis(false);
                                   setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+                                }}
+                                onBlur={() => {
+                                  setIsInputFocused(false);
                                 }}
                             />
                             <TouchableOpacity
@@ -1298,25 +1476,13 @@ export default function ChatScreen() {
                             </TouchableOpacity>
                         </View>
 
-                        {messageText.trim() ? (
-                            <TouchableOpacity 
-                                onPress={handleSendText}
-                                className="w-11 h-11 rounded-full items-center justify-center mb-0.5 shadow-sm bg-[#2563EB]"
-                            >
-                                <Send color="white" size={20} strokeWidth={2.5} className="ml-1" />
-                            </TouchableOpacity>
-                        ) : (
-                            <TouchableOpacity 
-                                onPress={handleVoiceRecord}
-                                className={`w-11 h-11 rounded-full items-center justify-center mb-0.5 shadow-sm ${isRecording ? 'bg-red-500' : 'bg-[#2563EB]'}`}
-                            >
-                                {isRecording ? (
-                                    <Square color="white" size={18} fill="white" />
-                                ) : (
-                                    <Mic color="white" size={20} strokeWidth={2.5} />
-                                )}
-                            </TouchableOpacity>
-                        )}
+                        <TouchableOpacity 
+                            onPress={handleSendText}
+                            disabled={!messageText.trim()}
+                            className={`w-11 h-11 rounded-full items-center justify-center mb-0.5 shadow-sm ${messageText.trim() ? 'bg-[#2563EB]' : 'bg-gray-300'}`}
+                        >
+                            <Send color="white" size={20} strokeWidth={2.5} className="ml-0.5" />
+                        </TouchableOpacity>
                     </View>
 
                     {/* Expandable Attachment Menu */}

@@ -283,11 +283,6 @@ export default function ProfileScreen() {
           {/* Location Group */}
           <View className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
             <Text className="text-gray-800 font-bold text-sm mb-4">Location Details</Text>
-            
-            <View className="mb-2">
-              <Text className="text-gray-500 text-xs font-medium mb-1 ml-1">Work Location</Text>
-              <InputWrapper icon={MapPin} value={formData.workLocation} />
-            </View>
 
             <View className="mb-2">
               <Text className="text-gray-500 text-xs font-medium mb-1 ml-1">Home Address</Text>

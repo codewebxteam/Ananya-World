@@ -1,6 +1,7 @@
 // components/Header.tsx
 import React, { useState, useEffect } from 'react';
-import { View, Text, Image, TouchableOpacity, SafeAreaView, Platform, Modal } from 'react-native';
+import { View, Text, Image, TouchableOpacity, SafeAreaView, Platform, Modal, StatusBar } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Bell, Menu, Calendar, Clock, X } from 'lucide-react-native';
 
 // Firebase integration ke liye interface banaya hai.
@@ -24,6 +25,7 @@ export const clearGlobalHeaderCache = () => {
 export default function Header({ 
   notificationCount = 3 
 }: { notificationCount?: number }) {
+  const insets = useSafeAreaInsets();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [user, setUser] = useState<UserData | null>(globalHeaderUserCache);
   const [isInitialLoading, setIsInitialLoading] = useState(!globalHeaderUserCache);
@@ -68,8 +70,11 @@ export default function Header({
   // Skeleton Loader for initial cold load
   if (isInitialLoading && !user) {
     return (
-      <View className="bg-[#003B95] overflow-hidden rounded-b-[32px] pb-6 pt-12 relative animate-pulse">
-        <SafeAreaView className="px-5">
+      <View 
+        className="bg-[#003B95] overflow-hidden pb-6 relative animate-pulse"
+        style={{ paddingTop: Math.max(insets.top, 12) }}
+      >
+        <View className="px-5">
           <View className="flex-row justify-between items-center mb-6">
             <View className="bg-white/20 h-7 w-36 rounded-md" />
           </View>
@@ -83,7 +88,7 @@ export default function Header({
               </View>
             </View>
           </View>
-        </SafeAreaView>
+        </View>
       </View>
     );
   }
@@ -96,13 +101,17 @@ export default function Header({
   };
 
   return (
-    <View className="bg-[#003B95] overflow-hidden rounded-b-[32px] pb-6 pt-12 relative">
+    <View 
+      className="bg-[#003B95] overflow-hidden pb-6 relative"
+      style={{ paddingTop: Math.max(insets.top, 12) }}
+    >
+      <StatusBar backgroundColor="#003B95" barStyle="light-content" />
       {/* Yellow Curve - clean flowing shape, sized to wrap Date/Time */}
       <View 
         className="absolute -right-6 -bottom-10 w-[200px] h-[200px] bg-[#FFD100] rounded-tl-full opacity-95" 
       />
 
-      <SafeAreaView className="px-5">
+      <View className="px-5">
         {/* Top Navbar: Logo & Icons */}
         <View className="flex-row justify-between items-center mb-6">
           <Text className="text-white text-2xl font-bold tracking-wide">
@@ -164,7 +173,7 @@ export default function Header({
             </View>
           </View>
         </View>
-      </SafeAreaView>
+      </View>
 
       <Modal
         visible={isImageModalVisible}

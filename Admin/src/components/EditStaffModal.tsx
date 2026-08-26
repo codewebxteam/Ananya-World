@@ -67,12 +67,16 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
     try {
       if (!staffToEdit?.id) throw new Error("Staff ID is missing");
       
+      const selectedBranch = branchesList.find(b => b.id === formData.branchId);
+      const branchName = selectedBranch ? selectedBranch.name : '';
+
       // Update details in Firestore
       await updateDoc(doc(db, 'users', staffToEdit.id), {
         name: formData.name,
         empId: formData.empId,
         staffType: formData.staffType,
         branchId: formData.branchId,
+        branchName: branchName || '',
         department: formData.staffType === 'Field Staff' ? 'Field Operations' : 'Office',
         phone: formData.phone,
         address: formData.address,

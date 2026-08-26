@@ -20,6 +20,183 @@ const formatLateTime = (mins: number): string => {
   return remainingMins > 0 ? `${hrs}h ${remainingMins}m` : `${hrs}h`;
 };
 
+function calculateCycleStats(
+  startDate: Date,
+  endDate: Date,
+  salaryAmount: number,
+  rawAttendance: any[],
+  leaveList: any[],
+  staffData: any,
+  userData: any
+) {
+  const localToday = new Date();
+  localToday.setHours(0,0,0,0);
+  const todayStr = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, '0')}-${String(localToday.getDate()).padStart(2, '0')}`;
+
+  const combinedMap = new Map<string, any>();
+  const userWeeklyOff = staffData?.weeklyOff || userData?.weeklyOff || 'Sunday';
+
+  const tempStart = new Date(startDate);
+  tempStart.setHours(0,0,0,0);
+  const tempEnd = new Date(endDate);
+  tempEnd.setHours(0,0,0,0);
+
+  for (let d = new Date(tempStart); d <= tempEnd; d.setDate(d.getDate() + 1)) {
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    
+    if (dateStr > todayStr) {
+      continue;
+    }
+    
+    const dayName = d.toLocaleDateString('en-US', { weekday: 'long' });
+    
+    // 1. Check real attendance
+    const realAtt = rawAttendance.find(att => att.date === dateStr);
+    if (realAtt) {
+      combinedMap.set(dateStr, {
+        status: realAtt.status || 'Present',
+        date: dateStr,
+        lateMinutes: realAtt.lateMinutes || 0
+      });
+      continue;
+    }
+    
+    // 2. Check approved leave
+    let isOnLeave = false;
+    leaveList.forEach(leave => {
+      if (leave.status === 'Approved') {
+        let current = new Date(leave.startDate);
+        const end = new Date(leave.endDate);
+        while (current <= end) {
+          const lDateStr = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}-${String(current.getDate()).padStart(2, '0')}`;
+          if (lDateStr === dateStr) {
+            isOnLeave = true;
+            break;
+          }
+          current.setDate(current.getDate() + 1);
+        }
+      }
+    });
+    
+    if (isOnLeave) {
+      combinedMap.set(dateStr, {
+        status: 'On Leave',
+        date: dateStr
+      });
+      continue;
+    }
+    
+    // 3. Check Weekly Off
+    if (dayName.toLowerCase() === userWeeklyOff.toLowerCase()) {
+      combinedMap.set(dateStr, {
+        status: 'Weekly Off',
+        date: dateStr
+      });
+      continue;
+    }
+    
+    // 4. Otherwise, if it is a past day (before today), mark as Absent
+    if (dateStr < todayStr) {
+      combinedMap.set(dateStr, {
+        status: 'Absent',
+        date: dateStr
+      });
+    }
+  }
+
+  // Calculate stats
+  let pres = 0, abs = 0, lat = 0, lev = 0;
+  let totalLateMinutes = 0;
+  const lateRecordsList: any[] = [];
+  const absentRecordsList: any[] = [];
+
+  combinedMap.forEach(item => {
+    if (item.status === 'Present') pres++;
+    else if (item.status === 'Late') { 
+      lat++; 
+      totalLateMinutes += (item.lateMinutes || 0);
+
+      const realAtt = rawAttendance.find(att => att.date === item.date);
+      const formatTime = (dVal: any) => {
+        if (!dVal) return '--:--';
+        try {
+          const dObj = new Date(dVal);
+          return dObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+        } catch {
+          return '--:--';
+        }
+      };
+
+      lateRecordsList.push({
+        date: item.date,
+        lateMinutes: item.lateMinutes || 0,
+        in: realAtt?.punchIn ? formatTime(realAtt.punchIn) : '--:--',
+        out: realAtt?.punchOut ? formatTime(realAtt.punchOut) : '--:--',
+        rawDate: item.date
+      });
+    }
+    else if (item.status === 'Absent') {
+      abs++;
+      absentRecordsList.push({
+        date: item.date,
+        rawDate: item.date
+      });
+    }
+    else if (item.status === 'On Leave' || item.status === 'Leave') lev++;
+  });
+
+  lateRecordsList.sort((a, b) => new Date(b.rawDate || 0).getTime() - new Date(a.rawDate || 0).getTime());
+  absentRecordsList.sort((a, b) => new Date(b.rawDate || 0).getTime() - new Date(a.rawDate || 0).getTime());
+
+  // Total working days in cycle
+  let totalWorkingDays = 0;
+  for (let d = new Date(tempStart); d <= tempEnd; d.setDate(d.getDate() + 1)) {
+     totalWorkingDays++;
+  }
+  
+  const perDay = totalWorkingDays > 0 ? (salaryAmount / totalWorkingDays) : 0;
+  
+  // Calculate Shift Duration in minutes
+  let shiftDurationMinutes = 480; // Default 8 hours
+  const sStart = staffData?.shiftStartTime || userData?.shiftStartTime;
+  const sEnd = staffData?.shiftEndTime || userData?.shiftEndTime;
+  if (sStart && sEnd) {
+    const [startH, startM] = sStart.split(':').map(Number);
+    const [endH, endM] = sEnd.split(':').map(Number);
+    let diff = (endH * 60 + endM) - (startH * 60 + startM);
+    if (diff < 0) diff += 24 * 60; // Cross midnight
+    if (diff > 0) shiftDurationMinutes = diff;
+  }
+  
+  const perMinuteSalary = perDay / shiftDurationMinutes;
+  const deductionsAmount = Math.round((abs * perDay) + (totalLateMinutes * perMinuteSalary));
+  const expected = salaryAmount > 0 ? Math.max(0, Math.round(salaryAmount - deductionsAmount)) : 0;
+
+  const formattedDate = tempEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const diffTime = tempEnd.getTime() - new Date().getTime();
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  const daysRemaining = diffDays > 0 ? `${diffDays} Days` : 'Due';
+
+  return {
+    baseSalary: salaryAmount,
+    allowances: 0,
+    deductionsAmount,
+    formattedSalaryDate: formattedDate,
+    daysRemaining,
+    daysPresent: pres,
+    daysLate: lat,
+    daysAbsent: abs,
+    onLeave: lev,
+    expectedSalary: expected,
+    lateHistory: lateRecordsList,
+    absentHistory: absentRecordsList,
+    perDayDeduction: perDay,
+    perMinuteDeduction: perMinuteSalary,
+    cycleMonthName: tempEnd.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+    isMature: false
+  };
+}
+
 // Module-level global memory cache to guarantee zero reload/skeleton when navigating between tabs
 let globalSalaryCache: {
   isLoaded: boolean;
@@ -71,8 +248,8 @@ export default function SalaryScreen() {
   const [staffData, setStaffData] = useState<any>(null);
   const [showLateModal, setShowLateModal] = useState(false);
   const [activeModalTab, setActiveModalTab] = useState<'all' | 'late' | 'absent'>('all');
-  const [lateHistory, setLateHistory] = useState<any[]>([]);
-  const [absentHistory, setAbsentHistory] = useState<any[]>([]);
+  const [maturedSalaryDetails, setMaturedSalaryDetails] = useState<any>(null);
+  const [selectedCycleDetails, setSelectedCycleDetails] = useState<any>(null);
   const [cycleMonthName, setCycleMonthName] = useState('');
   const [isAttLoaded, setIsAttLoaded] = useState(globalSalaryCache.isLoaded);
   const [isLeavesLoaded, setIsLeavesLoaded] = useState(globalSalaryCache.isLoaded);
@@ -167,12 +344,12 @@ export default function SalaryScreen() {
     if (!userData || !isAttLoaded || !isLeavesLoaded) return;
 
     const localToday = new Date();
+    localToday.setHours(0,0,0,0);
     
     // Fetch fresh salary properties from staffData or userData
     const rawNextSalaryDate = staffData?.nextSalaryDate || userData?.nextSalaryDate || null;
     const salaryAmount = Number(staffData?.salaryAmount || userData?.salaryAmount || userData?.baseSalary || userData?.salary || 0);
 
-    // Define the cycle window
     let cycleEnd = new Date();
     if (rawNextSalaryDate) {
       cycleEnd = new Date(rawNextSalaryDate);
@@ -185,194 +362,50 @@ export default function SalaryScreen() {
     } else {
       cycleEnd = new Date(localToday.getFullYear(), localToday.getMonth() + 1, 0);
     }
-    
+
     const cStart = new Date(cycleEnd);
     cStart.setMonth(cStart.getMonth() - 1);
+    cStart.setDate(cStart.getDate() + 1);
     
     let actualStart = cStart;
     const jDate = staffData?.joinDate || userData?.joinDate;
     if (jDate) {
       const joinD = new Date(jDate);
+      joinD.setHours(0,0,0,0);
       if (joinD > cStart) actualStart = joinD;
     }
 
-    let formattedDate = 'Not Set';
-    let daysRemaining = '--';
+    const activeDetails = calculateCycleStats(actualStart, cycleEnd, salaryAmount, rawAttendance, leaveList, staffData, userData);
+    activeDetails.isMature = false; // Running cycle
 
+    let maturedDetails: any = null;
     if (rawNextSalaryDate) {
-      try {
-        const targetDate = new Date(rawNextSalaryDate);
-        if (!isNaN(targetDate.getTime())) {
-          formattedDate = targetDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-          const diffTime = targetDate.getTime() - new Date().getTime();
-          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-          daysRemaining = diffDays > 0 ? `${diffDays} Days` : 'Due';
-        } else {
-          formattedDate = String(rawNextSalaryDate);
+      const nextSalaryDateObj = new Date(rawNextSalaryDate);
+      nextSalaryDateObj.setHours(0,0,0,0);
+
+      if (localToday >= nextSalaryDateObj) {
+        const maturedEnd = new Date(nextSalaryDateObj);
+        const maturedStart = new Date(maturedEnd);
+        maturedStart.setMonth(maturedStart.getMonth() - 1);
+        maturedStart.setDate(maturedStart.getDate() + 1);
+        
+        let actualMaturedStart = maturedStart;
+        if (jDate) {
+          const joinD = new Date(jDate);
+          joinD.setHours(0,0,0,0);
+          if (joinD > maturedStart) actualMaturedStart = joinD;
         }
-      } catch {
-        formattedDate = String(rawNextSalaryDate);
+
+        maturedDetails = calculateCycleStats(actualMaturedStart, maturedEnd, salaryAmount, rawAttendance, leaveList, staffData, userData);
+        maturedDetails.isMature = true;
       }
     }
 
-    const combinedMap = new Map<string, any>();
-    const userWeeklyOff = staffData?.weeklyOff || userData?.weeklyOff || 'Sunday';
-    const todayStr = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, '0')}-${String(localToday.getDate()).padStart(2, '0')}`;
+    setSalaryDetails(activeDetails);
+    setMaturedSalaryDetails(maturedDetails);
+    globalSalaryCache.salaryDetails = activeDetails;
+    setCycleMonthName(activeDetails.cycleMonthName);
     
-    for (let d = new Date(actualStart); d <= cycleEnd; d.setDate(d.getDate() + 1)) {
-      const dateStr = d.toISOString().split('T')[0];
-      
-      if (dateStr > todayStr) {
-        continue;
-      }
-      
-      const dayName = d.toLocaleDateString('en-US', { weekday: 'long' });
-      
-      // 1. Check real attendance
-      const realAtt = rawAttendance.find(att => att.date === dateStr);
-      if (realAtt) {
-        combinedMap.set(dateStr, {
-          status: realAtt.status || 'Present',
-          date: dateStr,
-          lateMinutes: realAtt.lateMinutes || 0
-        });
-        continue;
-      }
-      
-      // 2. Check approved leave
-      let isOnLeave = false;
-      leaveList.forEach(leave => {
-        if (leave.status === 'Approved') {
-          let current = new Date(leave.startDate);
-          const end = new Date(leave.endDate);
-          while (current <= end) {
-            const lDateStr = current.toISOString().split('T')[0];
-            if (lDateStr === dateStr) {
-              isOnLeave = true;
-              break;
-            }
-            current.setDate(current.getDate() + 1);
-          }
-        }
-      });
-      
-      if (isOnLeave) {
-        combinedMap.set(dateStr, {
-          status: 'On Leave',
-          date: dateStr
-        });
-        continue;
-      }
-      
-      // 3. Check Weekly Off
-      if (dayName.toLowerCase() === userWeeklyOff.toLowerCase()) {
-        combinedMap.set(dateStr, {
-          status: 'Weekly Off',
-          date: dateStr
-        });
-        continue;
-      }
-      
-      // 4. Otherwise, if it is a past day (before today), mark as Absent
-      if (dateStr < todayStr) {
-        combinedMap.set(dateStr, {
-          status: 'Absent',
-          date: dateStr
-        });
-      }
-    }
-    
-    // Calculate stats
-    let pres = 0, abs = 0, lat = 0, lev = 0;
-    let totalLateMinutes = 0;
-    const lateRecordsList: any[] = [];
-    const absentRecordsList: any[] = [];
-
-    combinedMap.forEach(item => {
-      if (item.status === 'Present') pres++;
-      else if (item.status === 'Late') { 
-        pres++; 
-        lat++; 
-        totalLateMinutes += (item.lateMinutes || 0);
-
-        const realAtt = rawAttendance.find(att => att.date === item.date);
-        const formatTime = (dVal: any) => {
-          if (!dVal) return '--:--';
-          try {
-            const dObj = new Date(dVal);
-            return dObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-          } catch {
-            return '--:--';
-          }
-        };
-
-        lateRecordsList.push({
-          date: item.date,
-          lateMinutes: item.lateMinutes || 0,
-          in: realAtt?.punchIn ? formatTime(realAtt.punchIn) : '--:--',
-          out: realAtt?.punchOut ? formatTime(realAtt.punchOut) : '--:--',
-          rawDate: item.date
-        });
-      }
-      else if (item.status === 'Absent') {
-        abs++;
-        absentRecordsList.push({
-          date: item.date,
-          rawDate: item.date
-        });
-      }
-      else if (item.status === 'On Leave' || item.status === 'Leave') lev++;
-    });
-
-    lateRecordsList.sort((a, b) => new Date(b.rawDate || 0).getTime() - new Date(a.rawDate || 0).getTime());
-    absentRecordsList.sort((a, b) => new Date(b.rawDate || 0).getTime() - new Date(a.rawDate || 0).getTime());
-    setLateHistory(lateRecordsList);
-    setAbsentHistory(absentRecordsList);
-    setCycleMonthName(cycleEnd.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }));
-
-    // Total working days in cycle
-    let totalWorkingDays = 0;
-    for (let d = new Date(actualStart); d <= cycleEnd; d.setDate(d.getDate() + 1)) {
-       totalWorkingDays++;
-    }
-    
-    const perDay = totalWorkingDays > 0 ? (salaryAmount / totalWorkingDays) : 0;
-    
-    // Calculate Shift Duration in minutes
-    let shiftDurationMinutes = 480; // Default 8 hours
-    const sStart = staffData?.shiftStartTime || userData?.shiftStartTime;
-    const sEnd = staffData?.shiftEndTime || userData?.shiftEndTime;
-    if (sStart && sEnd) {
-      const [startH, startM] = sStart.split(':').map(Number);
-      const [endH, endM] = sEnd.split(':').map(Number);
-      let diff = (endH * 60 + endM) - (startH * 60 + startM);
-      if (diff < 0) diff += 24 * 60; // Cross midnight
-      if (diff > 0) shiftDurationMinutes = diff;
-    }
-    
-    const perMinuteSalary = perDay / shiftDurationMinutes;
-    const deductionsAmount = Math.round((abs * perDay) + (totalLateMinutes * perMinuteSalary));
-    const expected = salaryAmount > 0 ? Math.max(0, Math.round(salaryAmount - deductionsAmount)) : 0;
-
-    // Check if salary is mature (today >= rawNextSalaryDate)
-    const isMature = rawNextSalaryDate ? (new Date() >= new Date(rawNextSalaryDate)) : false;
-
-    const updatedDetails = {
-      baseSalary: salaryAmount,
-      allowances: 0,
-      deductionsAmount,
-      formattedSalaryDate: formattedDate,
-      daysRemaining,
-      daysPresent: pres,
-      daysLate: lat,
-      daysAbsent: abs,
-      onLeave: lev,
-      expectedSalary: expected,
-      isMature
-    };
-
-    setSalaryDetails(updatedDetails);
-    globalSalaryCache.salaryDetails = updatedDetails;
     globalSalaryCache.isLoaded = true;
 
   }, [rawAttendance, leaveList, userData, staffData, isAttLoaded, isLeavesLoaded]);
@@ -383,95 +416,8 @@ export default function SalaryScreen() {
     }
   }, [isAttLoaded, isLeavesLoaded]);
 
-  const getAbsentDeduction = () => {
-    if (!userData && !staffData) return 0;
-    
-    const salaryAmount = Number(staffData?.salaryAmount || userData?.salaryAmount || userData?.baseSalary || userData?.salary || 0);
-    const rawNextSalaryDate = staffData?.nextSalaryDate || userData?.nextSalaryDate || null;
 
-    let cycleEnd = new Date();
-    if (rawNextSalaryDate) {
-      cycleEnd = new Date(rawNextSalaryDate);
-      cycleEnd.setHours(0,0,0,0);
-      const now = new Date();
-      now.setHours(0,0,0,0);
-      while (cycleEnd < now) {
-        cycleEnd.setMonth(cycleEnd.getMonth() + 1);
-      }
-    } else {
-      cycleEnd = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
-    }
-    
-    const cStart = new Date(cycleEnd);
-    cStart.setMonth(cStart.getMonth() - 1);
-    
-    let actualStart = cStart;
-    const jDate = staffData?.joinDate || userData?.joinDate;
-    if (jDate) {
-      const joinD = new Date(jDate);
-      if (joinD > cStart) actualStart = joinD;
-    }
-    
-    let totalWorkingDays = 0;
-    for (let d = new Date(actualStart); d <= cycleEnd; d.setDate(d.getDate() + 1)) {
-       totalWorkingDays++;
-    }
-    
-    const perDay = totalWorkingDays > 0 ? (salaryAmount / totalWorkingDays) : 0;
-    return Math.round(perDay);
-  };
-
-  const getLateDeduction = (lateMins: number) => {
-    if (!lateMins || (!userData && !staffData)) return 0;
-    
-    const salaryAmount = Number(staffData?.salaryAmount || userData?.salaryAmount || userData?.baseSalary || userData?.salary || 0);
-    const rawNextSalaryDate = staffData?.nextSalaryDate || userData?.nextSalaryDate || null;
-
-    let cycleEnd = new Date();
-    if (rawNextSalaryDate) {
-      cycleEnd = new Date(rawNextSalaryDate);
-      cycleEnd.setHours(0,0,0,0);
-      const now = new Date();
-      now.setHours(0,0,0,0);
-      while (cycleEnd < now) {
-        cycleEnd.setMonth(cycleEnd.getMonth() + 1);
-      }
-    } else {
-      cycleEnd = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
-    }
-    
-    const cStart = new Date(cycleEnd);
-    cStart.setMonth(cStart.getMonth() - 1);
-    
-    let actualStart = cStart;
-    const jDate = staffData?.joinDate || userData?.joinDate;
-    if (jDate) {
-      const joinD = new Date(jDate);
-      if (joinD > cStart) actualStart = joinD;
-    }
-    
-    let totalWorkingDays = 0;
-    for (let d = new Date(actualStart); d <= cycleEnd; d.setDate(d.getDate() + 1)) {
-       totalWorkingDays++;
-    }
-    
-    const perDay = totalWorkingDays > 0 ? (salaryAmount / totalWorkingDays) : 0;
-    
-    let shiftDurationMinutes = 480;
-    const sStart = staffData?.shiftStartTime || userData?.shiftStartTime;
-    const sEnd = staffData?.shiftEndTime || userData?.shiftEndTime;
-    if (sStart && sEnd) {
-      const [startH, startM] = sStart.split(':').map(Number);
-      const [endH, endM] = sEnd.split(':').map(Number);
-      let diff = (endH * 60 + endM) - (startH * 60 + startM);
-      if (diff < 0) diff += 24 * 60;
-      if (diff > 0) shiftDurationMinutes = diff;
-    }
-    
-    const perMinuteSalary = perDay / shiftDurationMinutes;
-    return Math.round(lateMins * perMinuteSalary);
-  };
-
+  const nextCycleInfo = salaryDetails;
   const displayedHistory = showAllHistory ? historyData : (historyData.length > 0 ? [historyData[0]] : []);
 
   // Skeleton Loader for initial loading
@@ -499,7 +445,7 @@ export default function SalaryScreen() {
           <Text className="text-black text-[16px] font-bold mb-4">Next Salary Details</Text>
           
           <View className="flex-row justify-between items-center mb-5">
-            {/* Salary Date */}
+            {/* Next Salary Date */}
             <View className="items-center flex-1">
               <Text className="text-gray-500 text-[10px] font-medium mb-2">Salary Date</Text>
               <View className="w-10 h-10 bg-[#EFF6FF] rounded-full items-center justify-center mb-2">
@@ -520,130 +466,110 @@ export default function SalaryScreen() {
               <Text className="text-[#F59E0B] text-xs font-bold">{salaryDetails.daysRemaining}</Text>
             </View>
 
-            {salaryDetails.isMature && (
-              <>
-                {/* Divider */}
-                <View className="w-[1px] h-12 bg-gray-100" />
-                
-                {/* Salary Generated */}
-                <View className="items-center flex-1">
-                  <Text className="text-gray-500 text-[10px] font-medium mb-2">Salary Generated</Text>
-                  <View className="w-10 h-10 bg-[#E6F4EA] rounded-full items-center justify-center mb-2">
-                    <Wallet color="#10B981" size={20} strokeWidth={2} />
-                  </View>
-                  <Text className="text-[#10B981] text-xs font-bold">
-                    {salaryDetails.expectedSalary > 0 ? `₹ ${salaryDetails.expectedSalary.toLocaleString('en-IN')}` : '₹ 0'}
-                  </Text>
-                </View>
-              </>
-            )}
+            {/* Divider */}
+            <View className="w-[1px] h-12 bg-gray-100" />
+            
+            {/* Deductions */}
+            <TouchableOpacity 
+              activeOpacity={0.7}
+              onPress={() => {
+                setSelectedCycleDetails(salaryDetails);
+                setActiveModalTab('all');
+                setShowLateModal(true);
+              }}
+              className="items-center flex-1"
+            >
+              <Text className="text-gray-500 text-[10px] font-medium mb-2">Deductions</Text>
+              <View className="w-10 h-10 bg-[#FEE2E2] rounded-full items-center justify-center mb-2">
+                <MinusCircle color="#EF4444" size={20} strokeWidth={2} />
+              </View>
+              <Text className="text-[#EF4444] text-xs font-bold">
+                ₹ {salaryDetails.deductionsAmount.toLocaleString('en-IN')}
+              </Text>
+            </TouchableOpacity>
           </View>
 
           {/* Info Banner */}
-          <View className="bg-[#F0F7FF] rounded-xl p-3 flex-row items-center gap-2">
+          <View className="bg-[#F0F7FF] rounded-xl p-3 flex-row items-center gap-2 mt-4">
             <Info color="#208AEF" size={16} strokeWidth={2.5} />
             <Text className="text-gray-600 text-[11px] font-medium flex-1">
               {salaryDetails.formattedSalaryDate !== 'Not Set' 
-                ? `Salary will be credited on or before ${salaryDetails.formattedSalaryDate}`
+                ? `Salary cycle will complete on ${salaryDetails.formattedSalaryDate}`
                 : 'Salary date will be updated by Admin'}
             </Text>
           </View>
         </View>
 
-        {/* 2. Salary Summary Card */}
-        <View className="bg-white rounded-[20px] p-4 shadow-sm border border-gray-100">
-          <View className="flex-row justify-between items-center mb-6">
-            <Text className="text-black text-[16px] font-bold">
-              {salaryDetails.isMature ? "Salary Summary" : "Current Cycle Deductions"}
+        {/* 2. Salary Payout Status Card */}
+        {maturedSalaryDetails ? (
+          // Case 1: Salary matured and pending payment
+          <View className="bg-white rounded-3xl p-5 shadow-sm border-l-4 border-l-[#F59E0B] border border-gray-100/80">
+            <View className="flex-row justify-between items-center mb-3">
+              <View className="flex-row items-center gap-2">
+                <Clock color="#F59E0B" size={18} strokeWidth={2.5} />
+                <Text className="text-black text-[15px] font-extrabold tracking-tight">Pending Payout</Text>
+              </View>
+              <View className="bg-[#FEF3C7] px-3 py-1 rounded-full border border-[#FDE68A]/50">
+                <Text className="text-[#D97706] text-[10px] font-black tracking-wider uppercase">Awaiting Transfer</Text>
+              </View>
+            </View>
+
+            <Text className="text-gray-500 text-[11px] font-semibold mb-4 leading-relaxed">
+              Your salary statement for the cycle ending on <Text className="text-black font-bold">{maturedSalaryDetails.formattedSalaryDate}</Text> has been generated.
             </Text>
-          </View>
 
-          {salaryDetails.isMature ? (
-            <>
-              {/* Total Earnings */}
-              <View className="items-center mb-6">
-                <Text className="text-gray-500 text-xs font-medium mb-1">Total Net Earnings (After Deductions)</Text>
-                <Text className="text-[#10B981] text-3xl font-bold tracking-tight">
-                  ₹ {salaryDetails.expectedSalary.toLocaleString('en-IN')}
+            <View className="flex-row justify-between items-center bg-[#FAFAFA] p-3.5 rounded-2xl border border-gray-100">
+              <View className="flex-1 pl-2">
+                <Text className="text-gray-400 text-[9px] font-bold uppercase tracking-wider mb-1.5">Net Pay</Text>
+                <Text className="text-[#10B981] text-xl font-black">
+                  ₹ {maturedSalaryDetails.expectedSalary.toLocaleString('en-IN')}
                 </Text>
               </View>
+              
+              <View className="w-[1px] h-10 bg-gray-200" />
 
-              {/* Breakdowns */}
-              <View className="flex-row justify-between items-center">
-                {/* Basic Salary */}
-                <View className="w-[31%] bg-[#F0FDF4] rounded-xl p-3 items-center">
-                  <View className="flex-row items-center gap-1.5 mb-2">
-                    <Wallet color="#10B981" size={14} strokeWidth={2.5} />
-                    <Text className="text-gray-600 text-[10px] font-medium">Basic Salary</Text>
-                  </View>
-                  <Text className="text-black text-xs font-bold">
-                    ₹ {salaryDetails.baseSalary.toLocaleString('en-IN')}
-                  </Text>
-                </View>
-                
-                {/* Allowances */}
-                <View className="w-[31%] bg-[#EFF6FF] rounded-xl p-3 items-center">
-                  <View className="flex-row items-center gap-1.5 mb-2">
-                    <Gift color="#3B82F6" size={14} strokeWidth={2.5} />
-                    <Text className="text-gray-600 text-[10px] font-medium">Allowances</Text>
-                  </View>
-                  <Text className="text-black text-xs font-bold">₹ 0</Text>
-                </View>
-
-                {/* Deductions */}
-                <TouchableOpacity 
-                  activeOpacity={0.7}
-                  onPress={() => {
-                    setActiveModalTab('all');
-                    setShowLateModal(true);
-                  }}
-                  className="w-[31%] bg-[#FFF1F2] rounded-xl p-3 items-center"
-                >
-                  <View className="flex-row items-center gap-1.5 mb-2">
-                    <MinusCircle color="#EF4444" size={14} strokeWidth={2.5} />
-                    <Text className="text-gray-600 text-[10px] font-medium">Deductions</Text>
-                  </View>
-                  <Text className="text-[#EF4444] text-xs font-bold">
-                    - ₹ {salaryDetails.deductionsAmount.toLocaleString('en-IN')}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* Net Pay */}
-              <View className="flex-row justify-between items-center pt-4 mt-5 border-t border-gray-100">
-                <Text className="text-black text-sm font-bold">Salary Generated</Text>
-                <Text className="text-[#10B981] text-lg font-bold">
-                  ₹ {salaryDetails.expectedSalary.toLocaleString('en-IN')}
-                </Text>
-              </View>
-            </>
-          ) : (
-            <>
-              {/* Only show Deduction amount */}
               <TouchableOpacity 
                 activeOpacity={0.7}
                 onPress={() => {
+                  setSelectedCycleDetails(maturedSalaryDetails);
                   setActiveModalTab('all');
                   setShowLateModal(true);
                 }}
-                className="items-center mb-5"
+                className="flex-1 items-end pr-2"
               >
-                <Text className="text-gray-500 text-xs font-medium mb-1">Total Deductions in Active Cycle</Text>
-                <Text className="text-[#EF4444] text-3xl font-bold tracking-tight">
-                  ₹ {salaryDetails.deductionsAmount.toLocaleString('en-IN')}
-                </Text>
-                <Text className="text-[#208AEF] text-[11px] font-semibold mt-1">Tap to view deduction breakdown</Text>
+                <Text className="text-gray-400 text-[9px] font-bold uppercase tracking-wider mb-1.5">Total Deductions</Text>
+                <View className="flex-row items-center gap-1">
+                  <Text className="text-[#EF4444] text-base font-extrabold">
+                    - ₹ {maturedSalaryDetails.deductionsAmount.toLocaleString('en-IN')}
+                  </Text>
+                  <ChevronRight color="#EF4444" size={14} strokeWidth={2.5} />
+                </View>
               </TouchableOpacity>
-              
-              <View className="bg-amber-50 border border-amber-100 rounded-xl p-3 flex-row items-center gap-2">
-                <Info color="#D97706" size={16} strokeWidth={2.5} />
-                <Text className="text-gray-600 text-[11px] font-medium flex-1">
-                  Salary details and net pay will be unlocked on your salary maturity date ({salaryDetails.formattedSalaryDate}).
+            </View>
+
+            <View className="bg-[#FFFBEB] rounded-xl p-2.5 flex-row items-center gap-2 border border-[#FEF3C7] mt-3">
+              <Info color="#F59E0B" size={14} strokeWidth={2.5} />
+              <Text className="text-gray-600 text-[10px] font-semibold flex-1 leading-relaxed">
+                Bank transfer is pending. Please contact admin if payment is delayed.
+              </Text>
+            </View>
+          </View>
+        ) : (
+          // Case 2: All past payments cleared, show next payment schedule
+          <View className="bg-white rounded-3xl p-5 shadow-sm border-l-4 border-l-[#10B981] border border-gray-100/80">
+            <View className="flex-row items-center gap-4">
+              <View className="w-12 h-12 bg-[#E6F4EA] rounded-2xl items-center justify-center border border-[#A7F3D0]/30 shadow-inner">
+                <Wallet color="#10B981" size={24} strokeWidth={2} />
+              </View>
+              <View className="flex-1">
+                <Text className="text-[#10B981] text-[13px] font-extrabold tracking-tight uppercase mb-0.5">All Cleared</Text>
+                <Text className="text-gray-600 text-[11px] font-semibold leading-relaxed">
+                  Your last cycle payment is fully settled. Next payout is scheduled for <Text className="text-black font-black">{salaryDetails.formattedSalaryDate}</Text>.
                 </Text>
               </View>
-            </>
-          )}
-        </View>
+            </View>
+          </View>
+        )}
 
         {/* 3. Attendance & Deductions Overview */}
         <View className="bg-white rounded-[20px] p-4 shadow-sm border border-gray-100">
@@ -653,12 +579,13 @@ export default function SalaryScreen() {
             <View className="bg-[#E6F4EA] w-[23%] aspect-square rounded-2xl items-center justify-center p-2">
               <CalendarCheck2 color="#138A43" size={24} strokeWidth={2.5} className="mb-1" />
               <Text className="text-gray-500 text-[9px] font-medium text-center">Days Present</Text>
-              <Text className="text-black text-lg font-bold leading-tight">{salaryDetails.daysPresent}</Text>
+              <Text className="text-black text-lg font-bold leading-tight">{nextCycleInfo.daysPresent}</Text>
               <Text className="text-gray-500 text-[9px] font-medium text-center">Days</Text>
             </View>
             <TouchableOpacity 
               activeOpacity={0.7}
               onPress={() => {
+                setSelectedCycleDetails(nextCycleInfo);
                 setActiveModalTab('absent');
                 setShowLateModal(true);
               }}
@@ -666,12 +593,13 @@ export default function SalaryScreen() {
             >
               <CalendarX2 color="#EF4444" size={24} strokeWidth={2.5} className="mb-1" />
               <Text className="text-gray-500 text-[9px] font-medium text-center">Days Absent</Text>
-              <Text className="text-black text-lg font-bold leading-tight">{salaryDetails.daysAbsent}</Text>
+              <Text className="text-black text-lg font-bold leading-tight">{nextCycleInfo.daysAbsent}</Text>
               <Text className="text-gray-500 text-[9px] font-medium text-center">Days</Text>
             </TouchableOpacity>
             <TouchableOpacity 
               activeOpacity={0.7}
               onPress={() => {
+                setSelectedCycleDetails(nextCycleInfo);
                 setActiveModalTab('late');
                 setShowLateModal(true);
               }}
@@ -679,13 +607,13 @@ export default function SalaryScreen() {
             >
               <Clock color="#F59E0B" size={24} strokeWidth={2.5} className="mb-1" />
               <Text className="text-gray-500 text-[9px] font-medium text-center">Days Late</Text>
-              <Text className="text-black text-lg font-bold leading-tight">{salaryDetails.daysLate}</Text>
+              <Text className="text-black text-lg font-bold leading-tight">{nextCycleInfo.daysLate}</Text>
               <Text className="text-gray-500 text-[9px] font-medium text-center">Days</Text>
             </TouchableOpacity>
             <View className="bg-[#EFF6FF] w-[23%] aspect-square rounded-2xl items-center justify-center p-2">
               <Plane color="#3B82F6" size={24} strokeWidth={2.5} className="mb-1" />
               <Text className="text-gray-500 text-[9px] font-medium text-center">On Leave</Text>
-              <Text className="text-black text-lg font-bold leading-tight">{salaryDetails.onLeave}</Text>
+              <Text className="text-black text-lg font-bold leading-tight">{nextCycleInfo.onLeave}</Text>
               <Text className="text-gray-500 text-[9px] font-medium text-center">Days</Text>
             </View>
           </View>
@@ -801,7 +729,7 @@ export default function SalaryScreen() {
                   alignItems: 'center'
                 }}
               >
-                <Text style={{ fontSize: 11, fontWeight: 'bold', color: activeModalTab === 'late' ? 'white' : '#4B5563' }}>Late ({lateHistory.length})</Text>
+                <Text style={{ fontSize: 11, fontWeight: 'bold', color: activeModalTab === 'late' ? 'white' : '#4B5563' }}>Late ({selectedCycleDetails?.lateHistory?.length || 0})</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => setActiveModalTab('absent')}
@@ -813,17 +741,19 @@ export default function SalaryScreen() {
                   alignItems: 'center'
                 }}
               >
-                <Text style={{ fontSize: 11, fontWeight: 'bold', color: activeModalTab === 'absent' ? 'white' : '#4B5563' }}>Absent ({absentHistory.length})</Text>
+                <Text style={{ fontSize: 11, fontWeight: 'bold', color: activeModalTab === 'absent' ? 'white' : '#4B5563' }}>Absent ({selectedCycleDetails?.absentHistory?.length || 0})</Text>
               </TouchableOpacity>
             </View>
 
             {/* List Content */}
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
               {(() => {
-                const perDayAbs = getAbsentDeduction();
+                const perDayAbs = Math.round(selectedCycleDetails?.perDayDeduction || 0);
+                const modalLateHistory = selectedCycleDetails?.lateHistory || [];
+                const modalAbsentHistory = selectedCycleDetails?.absentHistory || [];
 
                 if (activeModalTab === 'all') {
-                  const hasDeductions = absentHistory.length > 0 || lateHistory.length > 0;
+                  const hasDeductions = modalAbsentHistory.length > 0 || modalLateHistory.length > 0;
                   if (!hasDeductions) {
                     return (
                       <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 40 }}>
@@ -839,16 +769,16 @@ export default function SalaryScreen() {
                         <View>
                           <Text style={{ fontSize: 12, fontWeight: '700', color: '#9F1239' }}>Total Deductions</Text>
                           <Text style={{ fontSize: 10, color: '#BE123C', marginTop: 2 }}>
-                            {absentHistory.length} Absent Days + {lateHistory.length} Late Punches
+                            {modalAbsentHistory.length} Absent Days + {modalLateHistory.length} Late Punches
                           </Text>
                         </View>
                         <Text style={{ fontSize: 18, fontWeight: '900', color: '#EF4444' }}>
-                          - ₹ {salaryDetails.deductionsAmount.toLocaleString('en-IN')}
+                          - ₹ {(selectedCycleDetails?.deductionsAmount || 0).toLocaleString('en-IN')}
                         </Text>
                       </View>
 
                       {/* Absent Entries */}
-                      {absentHistory.map((item, idx) => {
+                      {modalAbsentHistory.map((item: any, idx: number) => {
                         const formattedDate = item.date ? new Date(item.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : item.date;
                         return (
                           <View key={`abs_${idx}`} style={{ backgroundColor: '#FEF2F2', borderLeftWidth: 4, borderLeftColor: '#EF4444', borderRadius: 16, padding: 14 }}>
@@ -866,9 +796,9 @@ export default function SalaryScreen() {
                       })}
 
                       {/* Late Entries */}
-                      {lateHistory.map((item, idx) => {
+                      {modalLateHistory.map((item: any, idx: number) => {
                         const formattedDate = item.date ? new Date(item.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : item.date;
-                        const deduction = getLateDeduction(item.lateMinutes || 0);
+                        const deduction = Math.round((item.lateMinutes || 0) * (selectedCycleDetails?.perMinuteDeduction || 0));
 
                         return (
                           <View key={`late_${idx}`} style={{ backgroundColor: '#FFFDF5', borderLeftWidth: 4, borderLeftColor: '#F59E0B', borderRadius: 16, padding: 14 }}>
@@ -892,7 +822,7 @@ export default function SalaryScreen() {
                 }
 
                 if (activeModalTab === 'late') {
-                  if (lateHistory.length === 0) {
+                  if (modalLateHistory.length === 0) {
                     return (
                       <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 40 }}>
                         <Text style={{ color: '#9CA3AF', fontSize: 14, fontWeight: 'bold' }}>No late logs for this cycle!</Text>
@@ -900,9 +830,9 @@ export default function SalaryScreen() {
                     );
                   }
 
-                  return lateHistory.map((item, idx) => {
+                  return modalLateHistory.map((item: any, idx: number) => {
                     const formattedDate = item.date ? new Date(item.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : item.date;
-                    const deduction = getLateDeduction(item.lateMinutes || 0);
+                    const deduction = Math.round((item.lateMinutes || 0) * (selectedCycleDetails?.perMinuteDeduction || 0));
 
                     return (
                       <View key={idx} style={{ backgroundColor: '#FFFDF5', borderLeftWidth: 4, borderLeftColor: '#F59E0B', borderRadius: 16, padding: 16, marginBottom: 12 }}>
@@ -928,7 +858,7 @@ export default function SalaryScreen() {
                 }
 
                 if (activeModalTab === 'absent') {
-                  if (absentHistory.length === 0) {
+                  if (modalAbsentHistory.length === 0) {
                     return (
                       <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 40 }}>
                         <Text style={{ color: '#9CA3AF', fontSize: 14, fontWeight: 'bold' }}>No absent logs for this cycle!</Text>
@@ -936,7 +866,7 @@ export default function SalaryScreen() {
                     );
                   }
 
-                  return absentHistory.map((item, idx) => {
+                  return modalAbsentHistory.map((item: any, idx: number) => {
                     const formattedDate = item.date ? new Date(item.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : item.date;
 
                     return (

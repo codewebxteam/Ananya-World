@@ -20,7 +20,8 @@ interface LiveTrackingProps {
 }
 
 export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
-  const [fieldStaffProfiles, setFieldStaffProfiles] = useState<any[]>([]);
+  const [staffProfiles, setStaffProfiles] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<'field' | 'office'>('field');
   const [staffOnMap, setStaffOnMap] = useState<any[]>([]);
   const [recentStaffData, setRecentStaffData] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -96,6 +97,11 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
       return { isStale: false, diffMins: 0, timeAgoStr: '0m', warningMessage: '' };
     }
   };
+  const activeStaffOnMap = staffOnMap.filter(s => {
+    const isOffice = s.profileData?.staffType === 'Office Staff' || s.profileData?.staffType === 'Office staff';
+    return activeTab === 'office' ? isOffice : !isOffice;
+  });
+
   const initMap = () => {
     if (!mapRef.current || !window.google || !window.google.maps) return;
     
@@ -123,11 +129,11 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
     markersRef.current = [];
     infoWindowsRef.current = [];
 
-    if (staffOnMap.length === 0) return;
+    if (activeStaffOnMap.length === 0) return;
 
     const bounds = new window.google.maps.LatLngBounds();
 
-    staffOnMap.forEach(staff => {
+    activeStaffOnMap.forEach(staff => {
       if (!staff.lat || !staff.lng) return;
 
       const position = { lat: staff.lat, lng: staff.lng };
@@ -191,11 +197,11 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
       bounds.extend(position);
     });
 
-    // Auto center map directly where field staff are located
-    if (staffOnMap.length > 1) {
+    // Auto center map directly where staff are located
+    if (activeStaffOnMap.length > 1) {
       mapInstanceRef.current.fitBounds(bounds, 60);
-    } else if (staffOnMap.length === 1) {
-      mapInstanceRef.current.setCenter({ lat: staffOnMap[0].lat, lng: staffOnMap[0].lng });
+    } else if (activeStaffOnMap.length === 1) {
+      mapInstanceRef.current.setCenter({ lat: activeStaffOnMap[0].lat, lng: activeStaffOnMap[0].lng });
       mapInstanceRef.current.setZoom(15);
     }
   };
@@ -225,9 +231,9 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
 
   useEffect(() => {
     updateMapMarkers();
-  }, [staffOnMap]);
+  }, [staffOnMap, activeTab]);
 
-  // Realtime registered Field Staff listener
+  // Realtime registered Staff listener (both Field and Office)
   useEffect(() => {
     const qStaff = query(
       collection(db, 'users'), 
@@ -237,19 +243,16 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
       const list: any[] = [];
       snapshot.forEach(docSnap => {
         const uData = docSnap.data();
-        const isField = uData.staffType === 'Field Staff' || uData.staffType === 'Field staff';
-        if (isField) {
-          list.push({ id: docSnap.id, ...uData });
-        }
+        list.push({ id: docSnap.id, ...uData });
       });
-      setFieldStaffProfiles(list);
+      setStaffProfiles(list);
     });
     return () => unsubscribe();
   }, []);
 
-  // Realtime attendance listener for active Field Staff only
+  // Realtime attendance listener for active Staff
   useEffect(() => {
-    if (fieldStaffProfiles.length === 0) return;
+    if (staffProfiles.length === 0) return;
 
     const todayStr = new Date().toISOString().split('T')[0];
     const qAtt = query(
@@ -265,11 +268,10 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
         const data = docSnap.data();
         const isPunchedIn = data.punchIn && !data.punchOut;
 
-        // Lookup profile to confirm if they are Field Staff
-        const profile = fieldStaffProfiles.find(p => p.empId === data.staffId);
-        const isField = (data.dept === 'Field staff' || data.dept === 'Field Staff') || (profile && (profile.staffType === 'Field staff' || profile.staffType === 'Field Staff'));
-
-        if (!isField) return; // Skip office staff completely
+        // Lookup profile (check both empId and id)
+        const profile = staffProfiles.find(p => p.empId === data.staffId || p.id === data.staffId);
+        const staffType = profile?.staffType || data.dept || 'Field Staff';
+        const isOffice = staffType === 'Office Staff' || staffType === 'Office' || staffType === 'Office staff';
 
         let formattedTime = 'N/A';
         if (data.punchIn) {
@@ -280,13 +282,14 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
         }
 
         const bId = profile?.branchId || data.branchId || '';
+        const displayName = isOffice ? `${data.name || 'Unknown'} (Office Staff)` : (data.name || 'Unknown');
 
         if (isPunchedIn && (data.currentLatitude || data.latitudeIn) && (data.currentLongitude || data.longitudeIn)) {
           activeList.push({
             id: docSnap.id,
             staffId: data.staffId,
-            name: data.name || 'Unknown',
-            role: data.dept || 'Field Staff',
+            name: displayName,
+            role: staffType,
             avatar: data.avatar || null,
             lat: Number(data.currentLatitude || data.latitudeIn),
             lng: Number(data.currentLongitude || data.longitudeIn),
@@ -294,8 +297,8 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
             time: formattedTime,
             punchInTime: data.punchIn,
             lastLocationUpdate: data.lastLocationUpdate || data.punchIn || null,
-            status: 'On Field',
-            dot: 'bg-orange-500',
+            status: isOffice ? 'Office Duty' : 'On Field',
+            dot: isOffice ? 'bg-blue-500' : 'bg-orange-500',
             branchId: bId,
             profileData: profile || null
           });
@@ -304,13 +307,13 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
         recentList.push({
           id: docSnap.id.substring(0, 8),
           staffId: data.staffId,
-          name: data.name || 'Unknown',
+          name: displayName,
           avatar: data.avatar || null,
           location: isPunchedIn ? (data.currentLocation || data.locationIn || 'Not Set') : (data.locationOut || 'Not Set'),
           updated: isPunchedIn ? `Punched In at ${formattedTime}` : (data.punchOut ? `Punched Out at ${new Date(data.punchOut).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}` : 'N/A'),
           battery: Math.floor(Math.random() * (98 - 72 + 1)) + 72,
           batColor: 'bg-green-500',
-          status: isPunchedIn ? 'On Field' : 'Offline',
+          status: isPunchedIn ? (isOffice ? 'Office Duty' : 'On Field') : 'Offline',
           branchId: bId,
           punchInTime: data.punchIn || null,
           profileData: profile || null
@@ -322,7 +325,7 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
     });
 
     return () => unsubscribe();
-  }, [fieldStaffProfiles]);
+  }, [staffProfiles]);
 
   // UI countdown timer
   useEffect(() => {
@@ -342,7 +345,7 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
     mapInstanceRef.current.panTo({ lat: staff.lat, lng: staff.lng });
     mapInstanceRef.current.setZoom(16);
 
-    const idx = staffOnMap.findIndex(s => s.id === staff.id);
+    const idx = activeStaffOnMap.findIndex(s => s.id === staff.id);
     if (idx !== -1 && markersRef.current[idx]) {
       infoWindowsRef.current.forEach(iw => iw.close());
       infoWindowsRef.current[idx].open(mapInstanceRef.current, markersRef.current[idx]);
@@ -356,28 +359,42 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
   };
 
   const handleAutoFixBounds = () => {
-    if (!mapInstanceRef.current || staffOnMap.length === 0) return;
+    if (!mapInstanceRef.current || activeStaffOnMap.length === 0) return;
     const bounds = new window.google.maps.LatLngBounds();
-    staffOnMap.forEach(staff => {
+    activeStaffOnMap.forEach(staff => {
       if (staff.lat && staff.lng) {
         bounds.extend({ lat: staff.lat, lng: staff.lng });
       }
     });
-    if (staffOnMap.length > 1) {
+    if (activeStaffOnMap.length > 1) {
       mapInstanceRef.current.fitBounds(bounds, 60);
-    } else if (staffOnMap.length === 1) {
-      mapInstanceRef.current.panTo({ lat: staffOnMap[0].lat, lng: staffOnMap[0].lng });
+    } else if (activeStaffOnMap.length === 1) {
+      mapInstanceRef.current.panTo({ lat: activeStaffOnMap[0].lat, lng: activeStaffOnMap[0].lng });
       mapInstanceRef.current.setZoom(15);
     }
   };
 
-  const filteredStaff = staffOnMap.filter(staff => 
+  const filteredStaff = activeStaffOnMap.filter(staff => 
     staff.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const totalFieldStaffCount = fieldStaffProfiles.length;
-  const onlineFieldStaffCount = staffOnMap.length;
-  const offlineFieldStaffCount = Math.max(0, totalFieldStaffCount - onlineFieldStaffCount);
+  const activeProfiles = staffProfiles.filter(p => {
+    const isOffice = p.staffType === 'Office Staff' || p.staffType === 'Office' || p.staffType === 'Office staff';
+    return activeTab === 'office' ? isOffice : !isOffice;
+  });
+
+  const totalFilteredStaffCount = activeProfiles.length;
+  const onlineFilteredStaffCount = activeStaffOnMap.length;
+  const offlineFilteredStaffCount = Math.max(0, totalFilteredStaffCount - onlineFilteredStaffCount);
+
+  const activeRecentStaff = recentStaffData.filter(s => {
+    const isOffice = s.status === 'Office Duty' || s.profileData?.staffType === 'Office Staff' || s.profileData?.staffType === 'Office' || s.profileData?.staffType === 'Office staff';
+    return activeTab === 'office' ? isOffice : !isOffice;
+  });
+
+  const filteredRecentStaff = activeRecentStaff.filter(s => 
+    s.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   return (
     <div className="animate-in fade-in duration-500">
@@ -387,8 +404,8 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
           <div className="flex items-start gap-3">
             <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center text-blue-500 shrink-0"><Users size={24} strokeWidth={2} /></div>
             <div>
-              <p className="text-gray-500 text-xs font-medium mb-0.5">Total Field Staff</p>
-              <h3 className="text-2xl font-bold text-gray-900 leading-tight">{totalFieldStaffCount}</h3>
+              <p className="text-gray-500 text-xs font-medium mb-0.5">{activeTab === 'office' ? "Total Office Staff" : "Total Field Staff"}</p>
+              <h3 className="text-2xl font-bold text-gray-900 leading-tight">{totalFilteredStaffCount}</h3>
             </div>
           </div>
           <p className="text-gray-500 text-[10px] font-medium mt-2 ml-[60px]">Registered</p>
@@ -399,7 +416,7 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
             <div className="w-12 h-12 rounded-full bg-green-50 flex items-center justify-center text-green-500 shrink-0"><MapPin size={24} strokeWidth={2} /></div>
             <div>
               <p className="text-gray-500 text-xs font-medium mb-0.5">Active / Online</p>
-              <h3 className="text-2xl font-bold text-gray-900 leading-tight">{onlineFieldStaffCount}</h3>
+              <h3 className="text-2xl font-bold text-gray-900 leading-tight">{onlineFilteredStaffCount}</h3>
             </div>
           </div>
           <p className="text-green-600 text-[10px] font-bold mt-2 ml-[60px]">Punched In</p>
@@ -410,7 +427,7 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
             <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center text-red-500 shrink-0"><WifiOff size={24} strokeWidth={2} /></div>
             <div>
               <p className="text-gray-500 text-xs font-medium mb-0.5">Offline Staff</p>
-              <h3 className="text-2xl font-bold text-gray-900 leading-tight">{offlineFieldStaffCount}</h3>
+              <h3 className="text-2xl font-bold text-gray-900 leading-tight">{offlineFilteredStaffCount}</h3>
             </div>
           </div>
           <p className="text-red-500 text-[10px] font-medium mt-2 ml-[60px]">Not Punched In</p>
@@ -421,7 +438,7 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
             <div className="w-12 h-12 rounded-full bg-orange-50 flex items-center justify-center text-orange-500 shrink-0"><Activity size={24} strokeWidth={2} /></div>
             <div>
               <p className="text-gray-500 text-xs font-medium mb-0.5">Tracking Points</p>
-              <h3 className="text-2xl font-bold text-gray-900 leading-tight">{onlineFieldStaffCount}</h3>
+              <h3 className="text-2xl font-bold text-gray-900 leading-tight">{onlineFilteredStaffCount}</h3>
             </div>
           </div>
           <p className="text-gray-500 text-[10px] font-medium mt-2 ml-[60px]">Live Map Markers</p>
@@ -434,13 +451,37 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
         {/* Left Panel: Staff on Map List */}
         <div className="bg-white rounded-[20px] shadow-sm border border-gray-100 flex flex-col h-[500px]">
           <div className="p-4 border-b border-gray-100">
-            <h2 className="text-gray-900 font-bold mb-3">Field Staff on Map <span className="text-gray-500 font-normal text-sm">({filteredStaff.length})</span></h2>
+            {/* Field Staff / Office Staff Toggle Tab */}
+            <div className="flex border border-gray-200 rounded-lg p-0.5 mb-3 bg-gray-50">
+              <button 
+                onClick={() => {
+                  setActiveTab('field');
+                  setSelectedStaffDetail(null);
+                }} 
+                className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${activeTab === 'field' ? 'bg-white text-blue-600 shadow-sm border border-gray-200/50' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Field Staff
+              </button>
+              <button 
+                onClick={() => {
+                  setActiveTab('office');
+                  setSelectedStaffDetail(null);
+                }} 
+                className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${activeTab === 'office' ? 'bg-white text-blue-600 shadow-sm border border-gray-200/50' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Office Staff
+              </button>
+            </div>
+
+            <h2 className="text-gray-900 font-bold mb-3">
+              {activeTab === 'office' ? 'Office Staff on Map' : 'Field Staff on Map'} <span className="text-gray-500 font-normal text-sm">({filteredStaff.length})</span>
+            </h2>
             <div className="flex gap-2">
               <div className="flex-1 relative">
                 <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
                 <input 
                   type="text" 
-                  placeholder="Search field staff..." 
+                  placeholder={activeTab === 'office' ? "Search office staff..." : "Search field staff..."}
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="w-full bg-gray-50 border border-gray-200 rounded-lg pl-9 pr-3 py-2 text-sm text-gray-700 focus:outline-none focus:border-blue-400" 
@@ -454,7 +495,7 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
           
           <div className="flex-1 overflow-y-auto">
             {filteredStaff.length === 0 ? (
-              <div className="p-4 text-center text-gray-500 text-sm">No field staff active on map.</div>
+              <div className="p-4 text-center text-gray-500 text-sm">No {activeTab === 'office' ? 'office' : 'field'} staff active on map.</div>
             ) : (
               filteredStaff.map((staff, idx) => {
                 const staleInfo = getLocationStaleInfo(staff.lastLocationUpdate);
@@ -467,7 +508,7 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
                   >
                     <div className="flex items-start gap-3">
                       <div className="flex items-center gap-2 mt-1">
-                        <div className={`w-2 h-2 rounded-full ${staleInfo.isStale ? 'bg-amber-500 animate-ping' : 'bg-orange-500'}`}></div>
+                        <div className={`w-2 h-2 rounded-full ${staleInfo.isStale ? 'bg-amber-500 animate-ping' : (activeTab === 'office' ? 'bg-blue-500' : 'bg-orange-500')}`}></div>
                         {staff.avatar ? (
                           <img 
                             src={staff.avatar} 
@@ -551,25 +592,25 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
           {/* Real Google Map Container */}
           <div ref={mapRef} className="w-full h-full absolute inset-0" />
 
-          {/* Empty state when no field staff are active / online */}
-          {onlineFieldStaffCount === 0 && (
+          {/* Empty state when no staff are active / online */}
+          {onlineFilteredStaffCount === 0 && (
             <div className="absolute inset-0 bg-slate-50 flex items-center justify-center flex-col p-6 text-center z-20">
               <div className="w-16 h-16 rounded-2xl bg-orange-50 border border-orange-100 flex items-center justify-center text-orange-500 mb-4 shadow-sm">
                 <WifiOff size={32} strokeWidth={2} />
               </div>
-              <h3 className="text-gray-900 font-extrabold text-lg mb-1">No Active Staff Available Right Now</h3>
+              <h3 className="text-gray-900 font-extrabold text-lg mb-1">No Active {activeTab === 'office' ? "Office" : "Field"} Staff Available Right Now</h3>
               <p className="text-gray-500 text-xs font-medium max-w-md leading-relaxed mb-5">
-                Currently, no field staff members are punched-in on duty. As soon as a field staff member punches in from their app, live GPS tracking will automatically initialize on the map.
+                Currently, no {activeTab === 'office' ? 'office' : 'field'} staff members are punched-in on duty. As soon as an employee punches in from their app, live GPS tracking will automatically initialize on the map.
               </p>
               <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-full border border-gray-200 shadow-sm text-xs font-bold text-gray-700">
                 <span className="w-2.5 h-2.5 rounded-full bg-orange-500 animate-ping" />
-                <span>Waiting for Field Staff Punch-In...</span>
+                <span>Waiting for {activeTab === 'office' ? "Office" : "Field"} Staff Punch-In...</span>
               </div>
             </div>
           )}
 
           {/* Fallback layout in case key is invalid or loading */}
-          {onlineFieldStaffCount > 0 && !window.google && (
+          {onlineFilteredStaffCount > 0 && !window.google && (
             <div className="absolute inset-0 bg-[#F0F4F8] flex items-center justify-center flex-col p-4 text-center z-10">
               <Activity className="text-blue-500 animate-pulse mb-3" size={32} />
               <p className="text-gray-600 font-medium text-sm">Loading Live Google Map...</p>
@@ -580,16 +621,16 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
           {/* Map UI Overlay Elements */}
           {/* Top Left: Title indicator */}
           <div className="absolute top-4 left-4 z-10 flex bg-white rounded-lg shadow-sm overflow-hidden border border-gray-200">
-            <button className="px-4 py-1.5 text-sm font-bold text-gray-800 bg-gray-100">Live Field Map</button>
+            <button className="px-4 py-1.5 text-sm font-bold text-gray-800 bg-gray-100">Live {activeTab === 'office' ? "Office" : "Field"} Map</button>
           </div>
 
           {/* Top Right: Map Legend */}
           <div className="absolute top-4 right-4 z-10 bg-white/95 backdrop-blur rounded-xl p-3 shadow-md border border-gray-200 space-y-2">
             <div className="flex items-center gap-2 text-xs font-semibold text-gray-700">
-              <span className="text-orange-500 font-bold w-4 text-right">{onlineFieldStaffCount}</span> Online Field
+              <span className={`w-4 text-right font-bold ${activeTab === 'office' ? 'text-blue-500' : 'text-orange-500'}`}>{onlineFilteredStaffCount}</span> Online {activeTab === 'office' ? "Office" : "Field"}
             </div>
             <div className="flex items-center gap-2 text-xs font-semibold text-gray-700">
-              <span className="text-gray-500 font-bold w-4 text-right">{offlineFieldStaffCount}</span> Offline Field
+              <span className="text-gray-500 font-bold w-4 text-right">{offlineFilteredStaffCount}</span> Offline {activeTab === 'office' ? "Office" : "Field"}
             </div>
           </div>
 
@@ -642,7 +683,7 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
         
         {/* Recently Active Staff Table */}
         <div className="bg-white rounded-[20px] p-5 shadow-sm border border-gray-100 lg:col-span-2 flex flex-col">
-          <h3 className="text-gray-900 font-bold mb-4">Recently Active Field Staff</h3>
+          <h3 className="text-gray-900 font-bold mb-4">{activeTab === 'office' ? "Recently Active Office Staff" : "Recently Active Field Staff"}</h3>
           <div className="overflow-x-auto flex-1">
             <table className="w-full text-left min-w-[600px]">
               <thead>
@@ -656,12 +697,12 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
                 </tr>
               </thead>
               <tbody>
-                {recentStaffData.length === 0 ? (
+                {filteredRecentStaff.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-8 text-center text-gray-500 text-sm">No recent active staff found.</td>
                   </tr>
                 ) : (
-                  recentStaffData.map((staff) => (
+                  filteredRecentStaff.map((staff) => (
                     <tr 
                       key={staff.id} 
                       onClick={() => setSelectedStaffDetail(staff)}
@@ -711,29 +752,29 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
           <h3 className="text-gray-900 font-bold mb-6">Tracking Summary <span className="text-gray-500 font-normal text-sm ml-1">(Today)</span></h3>
           
           <div className="flex flex-col sm:flex-row items-center gap-8 justify-center mb-6 flex-1">
-            {/* CSS Conic Gradient Doughnut representing Online vs Offline Field Staff */}
+            {/* CSS Conic Gradient Doughnut representing Online vs Offline Staff */}
             <div className="relative w-36 h-36 rounded-full flex items-center justify-center shrink-0" 
                  style={{ 
-                   background: `conic-gradient(#10B981 0% ${totalFieldStaffCount > 0 ? (onlineFieldStaffCount / totalFieldStaffCount) * 100 : 0}%, #E5E7EB ${totalFieldStaffCount > 0 ? (onlineFieldStaffCount / totalFieldStaffCount) * 100 : 0}% 100%)` 
+                   background: `conic-gradient(#10B981 0% ${totalFilteredStaffCount > 0 ? (onlineFilteredStaffCount / totalFilteredStaffCount) * 100 : 0}%, #E5E7EB ${totalFilteredStaffCount > 0 ? (onlineFilteredStaffCount / totalFilteredStaffCount) * 100 : 0}% 100%)` 
                  }}>
               <div className="absolute w-[100px] h-[100px] bg-white rounded-full flex flex-col items-center justify-center shadow-inner">
-                <span className="text-3xl font-bold text-gray-900 leading-tight">{onlineFieldStaffCount}</span>
-                <span className="text-gray-500 text-[10px] font-medium leading-tight text-center mt-1">Active<br/>Field Staff</span>
+                <span className="text-3xl font-bold text-gray-900 leading-tight">{onlineFilteredStaffCount}</span>
+                <span className="text-gray-500 text-[10px] font-medium leading-tight text-center mt-1">Active<br/>{activeTab === 'office' ? "Office" : "Field"} Staff</span>
               </div>
             </div>
             {/* Legend */}
             <div className="flex-1 w-full space-y-4">
               <div className="flex justify-between items-center text-sm">
                 <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-green-500"></div><span className="text-gray-600 font-medium">Online (Active)</span></div>
-                <span className="text-gray-900 font-semibold">{onlineFieldStaffCount} <span className="text-gray-400 font-normal text-xs ml-1">({totalFieldStaffCount > 0 ? Math.round((onlineFieldStaffCount / totalFieldStaffCount) * 100) : 0}%)</span></span>
+                <span className="text-gray-900 font-semibold">{onlineFilteredStaffCount} <span className="text-gray-400 font-normal text-xs ml-1">({totalFilteredStaffCount > 0 ? Math.round((onlineFilteredStaffCount / totalFilteredStaffCount) * 100) : 0}%)</span></span>
               </div>
               <div className="flex justify-between items-center text-sm">
                 <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-gray-200"></div><span className="text-gray-600 font-medium">Offline</span></div>
-                <span className="text-gray-900 font-semibold">{offlineFieldStaffCount} <span className="text-gray-400 font-normal text-xs ml-1">({totalFieldStaffCount > 0 ? Math.round((offlineFieldStaffCount / totalFieldStaffCount) * 100) : 0}%)</span></span>
+                <span className="text-gray-900 font-semibold">{offlineFilteredStaffCount} <span className="text-gray-400 font-normal text-xs ml-1">({totalFilteredStaffCount > 0 ? Math.round((offlineFilteredStaffCount / totalFilteredStaffCount) * 100) : 0}%)</span></span>
               </div>
               <div className="flex justify-between items-center text-sm border-t border-gray-100 pt-2">
-                <span className="text-gray-600 font-bold">Total Field Staff</span>
-                <span className="text-gray-900 font-bold">{totalFieldStaffCount}</span>
+                <span className="text-gray-600 font-bold">Total {activeTab === 'office' ? "Office" : "Field"} Staff</span>
+                <span className="text-gray-900 font-bold">{totalFilteredStaffCount}</span>
               </div>
             </div>
           </div>

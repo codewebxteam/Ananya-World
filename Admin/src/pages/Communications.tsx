@@ -331,7 +331,11 @@ export default function Communications({ branchesList = [], profileData, setShow
   const getBranchName = (branchId: string) => {
     if (!branchId) return 'Unassigned';
     const b = branchesList.find(item => item.id === branchId);
-    return b ? b.name : branchId;
+    if (b) return b.name;
+    if (branchId.length === 20 && /^[a-zA-Z0-9]+$/.test(branchId)) {
+      return 'Other Branch';
+    }
+    return branchId;
   };
 
   // Group staff by branch
@@ -1093,7 +1097,7 @@ export default function Communications({ branchesList = [], profileData, setShow
                       </div>
                       
                       <div className="flex items-center justify-between text-[9px] text-gray-400 font-semibold">
-                        <span>{room.userABranch || 'Other'} ↔ {room.userBBranch || 'Other'}</span>
+                        <span>{getBranchName(room.userABranch) || 'Other'} ↔ {getBranchName(room.userBBranch) || 'Other'}</span>
                       </div>
 
                       <p className="text-[11px] text-gray-500 truncate w-full italic mt-0.5">
@@ -1118,7 +1122,7 @@ export default function Communications({ branchesList = [], profileData, setShow
                         const r = privateRooms.find(r => r.roomId === selectedRoomId);
                         if (!r) return "";
                         const { empA, empB } = getEmpIdsFromRoomId(r.roomId);
-                        return `${r.userAName} (${empA}) ↔ ${r.userBName} (${empB})`;
+                        return `${r.userAName} ↔ ${r.userBName}`;
                       })()}
                     </h3>
                     <p className="text-[11px] text-gray-500 font-semibold mt-0.5">
@@ -1776,7 +1780,7 @@ export default function Communications({ branchesList = [], profileData, setShow
                             )}
                             <div className="flex-1 text-left min-w-0">
                               <span className="text-sm font-bold text-gray-900 truncate block">{staff.name}</span>
-                              <span className="text-[10px] text-gray-400">{staff.designation || 'Staff'} • ID: {staff.empId}</span>
+                              <span className="text-[10px] text-gray-400">{staff.designation || 'Staff'}</span>
                             </div>
                           </button>
                         );

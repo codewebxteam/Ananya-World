@@ -72,12 +72,16 @@ export default function ApproveStaffModal({ isOpen, onClose, branchesList, staff
       if (!formData.salaryAmount) throw new Error("Monthly Salary is mandatory for approval.");
       if (!formData.nextSalaryDate) throw new Error("Next Salary Date is mandatory for approval.");
       
+      const selectedBranch = branchesList.find(b => b.id === formData.branchId);
+      const branchName = selectedBranch ? selectedBranch.name : '';
+
       // Update details in Firestore
       await updateDoc(doc(db, 'users', staffToEdit.id), {
         name: formData.name,
         empId: formData.empId,
         staffType: formData.staffType,
         branchId: formData.branchId,
+        branchName: branchName || '',
         department: formData.staffType === 'Field Staff' ? 'Field Operations' : 'Office',
         phone: formData.phone,
         parentPhone: formData.parentPhone,

@@ -8,6 +8,136 @@ import { collection, query, where, onSnapshot, writeBatch, doc, serverTimestamp,
 import { db } from '../services/firebase';
 import StaffDetailsModal from '../components/StaffDetailsModal';
 
+function calculateRunningCycle(
+  staff: any,
+  rawNextSalaryDate: string,
+  salaryAmount: number,
+  globalAttendance: any[],
+  globalLeaves: any[],
+  globalHolidays: any[],
+  globalOffCancels: any[]
+) {
+  const localToday = new Date();
+  localToday.setHours(0,0,0,0);
+  const todayStr = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, '0')}-${String(localToday.getDate()).padStart(2, '0')}`;
+
+  let cycleEnd = new Date();
+  if (rawNextSalaryDate) {
+    cycleEnd = new Date(rawNextSalaryDate);
+    cycleEnd.setHours(0,0,0,0);
+    const now = new Date(localToday);
+    now.setHours(0,0,0,0);
+    while (cycleEnd < now) {
+      cycleEnd.setMonth(cycleEnd.getMonth() + 1);
+    }
+  } else {
+    cycleEnd = new Date(localToday.getFullYear(), localToday.getMonth() + 1, 0);
+  }
+
+  const cStart = new Date(cycleEnd);
+  cStart.setMonth(cStart.getMonth() - 1);
+  cStart.setDate(cStart.getDate() + 1); // exclude previous cycle boundary
+
+  let actualStart = cStart;
+  if (staff.joinDate) {
+    const joinD = new Date(staff.joinDate);
+    joinD.setHours(0,0,0,0);
+    if (joinD > cStart) actualStart = joinD;
+  }
+
+  // Filter attendance/leaves/holidays/cancels for this cycle window
+  const startStr = actualStart.toISOString().split('T')[0];
+  const endStr = cycleEnd.toISOString().split('T')[0];
+
+  const userAttList = globalAttendance.filter(att => att.staffId === (staff.empId || staff.id) && att.date >= startStr && att.date <= endStr);
+  const userLeavesList = globalLeaves.filter(leave => leave.staffId === (staff.empId || staff.id) && leave.status === 'Approved');
+  const userHolidaysList = globalHolidays.filter(h => h.date >= startStr && h.date <= endStr);
+  const userCancelsList = globalOffCancels.filter(oc => oc.staffId === (staff.empId || staff.id) && oc.date >= startStr && oc.date <= endStr);
+
+  const holidaysSet = new Set(userHolidaysList.map(h => h.date));
+  const offCancelsSet = new Set(userCancelsList.map(oc => oc.date));
+
+  let totalWorkingDays = 0;
+  for (let d = new Date(actualStart); d <= cycleEnd; d.setDate(d.getDate() + 1)) {
+    totalWorkingDays++;
+  }
+
+  let deductionDays = 0;
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const staffWeeklyOff = staff.weeklyOff || 'Sunday';
+  const deductionDetails: any[] = [];
+
+  const tempStart = new Date(actualStart);
+  tempStart.setHours(0,0,0,0);
+  const tempEnd = new Date(cycleEnd);
+  tempEnd.setHours(0,0,0,0);
+
+  for (let d = new Date(tempStart); d <= tempEnd; d.setDate(d.getDate() + 1)) {
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (dateStr > todayStr) {
+      continue;
+    }
+    
+    const dayName = days[d.getDay()];
+    const isDefaultOff = dayName === staffWeeklyOff;
+    const isCompanyHoliday = holidaysSet.has(dateStr);
+    const isApprovedLeave = userLeavesList.some(leave => dateStr >= leave.startDate && dateStr <= leave.endDate);
+    const isOffCancelled = offCancelsSet.has(dateStr);
+
+    const isWorkingDay = !isCompanyHoliday && !isApprovedLeave && (!isDefaultOff || isOffCancelled);
+
+    if (isWorkingDay) {
+      const attRecord = userAttList.find(att => att.date === dateStr);
+      const attStatus = attRecord?.status || null;
+      const punchInTime = attRecord?.punchIn || null;
+
+      if (!attStatus || attStatus === 'Absent') {
+        deductionDays += 1;
+        deductionDetails.push({ date: dateStr, punchIn: punchInTime, status: attStatus || 'Absent', deduction: 1, forgiven: false });
+      } else if (attStatus === 'Late' || attStatus === 'Half Day') {
+        let dayFraction = 0.5;
+        let lateMins = attRecord?.lateMinutes || 0;
+        
+        if (attStatus === 'Late') {
+          let shiftDurationMinutes = 480;
+          if (staff.shiftStartTime && staff.shiftEndTime) {
+            const [startH, startM] = staff.shiftStartTime.split(':').map(Number);
+            const [endH, endM] = staff.shiftEndTime.split(':').map(Number);
+            let diff = (endH * 60 + endM) - (startH * 60 + startM);
+            if (diff < 0) diff += 24 * 60;
+            if (diff > 0) shiftDurationMinutes = diff;
+          }
+          dayFraction = lateMins > 0 ? (lateMins / shiftDurationMinutes) : 0;
+        }
+        
+        deductionDays += dayFraction;
+        deductionDetails.push({ date: dateStr, punchIn: punchInTime, status: attStatus, deduction: dayFraction, forgiven: false, lateMinutes: lateMins });
+      }
+    }
+  }
+
+  const baseSalary = Number(staff.salaryAmount) || 0;
+  const perDaySalary = totalWorkingDays > 0 ? (baseSalary / totalWorkingDays) : 0;
+  const expectedSalary = Math.max(0, Math.round(baseSalary - (deductionDays * perDaySalary)));
+  const payrollId = `${staff.empId || staff.id}_${endStr}`;
+
+  return {
+    id: payrollId,
+    staffId: staff.empId || staff.id,
+    staffName: staff.name,
+    maturityDate: cycleEnd.toISOString().split('T')[0],
+    baseSalary: baseSalary,
+    totalWorkingDays: totalWorkingDays,
+    deductionDays: deductionDays,
+    perDaySalary: Math.round(perDaySalary),
+    deductionDetails: deductionDetails,
+    expectedSalary: expectedSalary,
+    paidAmount: 0,
+    status: 'Not Due',
+    payments: []
+  };
+}
+
 export default function Salaries() {
   const [staffList, setStaffList] = useState<any[]>([]);
   const [payrollData, setPayrollData] = useState<any[]>([]);
@@ -39,6 +169,11 @@ export default function Salaries() {
   const [selectedDeductionStaffId, setSelectedDeductionStaffId] = useState<string | null>(null);
   const [forgivingIndex, setForgivingIndex] = useState<number | null>(null);
 
+  const [globalAttendance, setGlobalAttendance] = useState<any[]>([]);
+  const [globalLeaves, setGlobalLeaves] = useState<any[]>([]);
+  const [globalHolidays, setGlobalHolidays] = useState<any[]>([]);
+  const [globalOffCancels, setGlobalOffCancels] = useState<any[]>([]);
+
   const currentMonthYear = new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
   const currentMonthKey = `${new Date().getMonth() + 1}_${new Date().getFullYear()}`;
 
@@ -64,9 +199,37 @@ export default function Salaries() {
       setPayrollData(payroll);
     });
 
+    const unsubAtt = onSnapshot(collection(db, 'attendance'), (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+      setGlobalAttendance(list);
+    });
+
+    const unsubLeaves = onSnapshot(collection(db, 'leaves'), (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+      setGlobalLeaves(list);
+    });
+
+    const unsubHolidays = onSnapshot(collection(db, 'company_holidays'), (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+      setGlobalHolidays(list);
+    });
+
+    const unsubOffCancels = onSnapshot(collection(db, 'weekly_off_cancellations'), (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
+      setGlobalOffCancels(list);
+    });
+
     return () => {
       unsubStaff();
       unsubPayroll();
+      unsubAtt();
+      unsubLeaves();
+      unsubHolidays();
+      unsubOffCancels();
     };
   }, []);
 
@@ -95,7 +258,7 @@ export default function Salaries() {
         nextDate.setHours(0,0,0,0);
         
         if (now >= nextDate) {
-          const payrollId = `${staff.id}_${nextDateStr}`;
+          const payrollId = `${staff.empId || staff.id}_${nextDateStr}`;
           const existingRecord = payrollData.find(p => p.id === payrollId);
           
           if (!existingRecord) {
@@ -116,7 +279,7 @@ export default function Salaries() {
             holidaysSnap.forEach(d => holidaysSet.add(d.data().date));
 
             // Query approved leaves for the staff member
-            const qApprovedLeaves = query(collection(db, 'leaves'), where('staffId', '==', staff.id), where('status', '==', 'Approved'));
+            const qApprovedLeaves = query(collection(db, 'leaves'), where('staffId', '==', staff.empId || staff.id), where('status', '==', 'Approved'));
             const leavesSnap = await getDocs(qApprovedLeaves);
             const leavesList: any[] = [];
             leavesSnap.forEach(d => leavesList.push(d.data()));
@@ -128,6 +291,10 @@ export default function Salaries() {
             offCancelsSnap.forEach(d => offCancelsSet.add(d.data().date));
 
             let totalWorkingDays = 0;
+            for (let d = new Date(cycleStart); d <= cycleEnd; d.setDate(d.getDate() + 1)) {
+              totalWorkingDays++;
+            }
+
             let deductionDays = 0;
             const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
             const staffWeeklyOff = staff.weeklyOff || 'Sunday';
@@ -149,7 +316,6 @@ export default function Salaries() {
               const isWorkingDay = !isCompanyHoliday && !isApprovedLeave && (!isDefaultOff || isOffCancelled);
 
               if (isWorkingDay) {
-                totalWorkingDays++;
                 const attStatus = attendanceMap.get(dateStr);
                 const attRecord = attSnap.docs.find(doc => doc.data().date === dateStr);
                 const punchInTime = attRecord?.data()?.punchIn || null;
@@ -186,7 +352,7 @@ export default function Salaries() {
             
             const payrollRef = doc(db, 'payroll', payrollId);
             batch.set(payrollRef, {
-              staffId: staff.id,
+              staffId: staff.empId || staff.id,
               staffName: staff.name,
               department: staff.staffType || staff.department || 'General',
               maturityDate: nextDateStr,
@@ -244,7 +410,7 @@ export default function Salaries() {
     setSubmittingPayment(true);
     try {
       const amountToPay = Number(paymentAmount);
-      const payrollId = `${selectedStaff.id}_${selectedStaff.nextSalaryDate}`;
+      const payrollId = `${selectedStaff.empId || selectedStaff.id}_${selectedStaff.nextSalaryDate}`;
       const payrollRef = doc(db, 'payroll', payrollId);
       const staffRef = doc(db, 'users', selectedStaff.id);
       
@@ -270,7 +436,7 @@ export default function Salaries() {
         isFullyPaid = status === 'Paid';
 
         batch.set(payrollRef, {
-          staffId: selectedStaff.id,
+          staffId: selectedStaff.empId || selectedStaff.id,
           staffName: selectedStaff.name,
           department: selectedStaff.staffType || selectedStaff.department || 'General',
           maturityDate: selectedStaff.nextSalaryDate,
@@ -360,7 +526,7 @@ export default function Salaries() {
   // Prepare staff-wise table data
   const staffTableData = staffList.map(staff => {
     const nextDateStr = staff.nextSalaryDate || new Date().toISOString().split('T')[0];
-    const payrollId = `${staff.id}_${nextDateStr}`;
+    const payrollId = `${staff.empId || staff.id}_${nextDateStr}`;
     const record = payrollData.find(p => p.id === payrollId);
     
     const now = new Date();
@@ -370,9 +536,21 @@ export default function Salaries() {
     
     const isMatured = now >= nextDate;
     
-    // If not matured and no record, expected is base. If matured and record, expected is net.
-    const expected = record ? (Number(record.expectedSalary) || 0) : (Number(staff.salaryAmount) || 0);
-    const paid = record ? (Number(record.paidAmount) || 0) : 0;
+    let activeRecord = record;
+    if (!activeRecord) {
+      activeRecord = calculateRunningCycle(
+        staff,
+        nextDateStr,
+        Number(staff.salaryAmount) || 0,
+        globalAttendance,
+        globalLeaves,
+        globalHolidays,
+        globalOffCancels
+      );
+    }
+    
+    const expected = activeRecord ? (Number(activeRecord.expectedSalary) || 0) : (Number(staff.salaryAmount) || 0);
+    const paid = activeRecord ? (Number(activeRecord.paidAmount) || 0) : 0;
     const pending = expected - paid;
     
     let status = record?.status;
@@ -382,12 +560,12 @@ export default function Salaries() {
 
     return {
       ...staff,
-      record,
+      record: activeRecord,
       expected,
       paid,
       pending,
       status,
-      maturityDate: nextDateStr
+      maturityDate: activeRecord?.maturityDate || nextDateStr
     };
   });
 
@@ -1015,14 +1193,18 @@ export default function Salaries() {
                                 {d.forgiven ? (
                                   <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-1 rounded-full">✓ Forgiven</span>
                                 ) : (
-                                  <button
-                                    onClick={() => handleForgiveDeduction(realIndex)}
-                                    disabled={forgivingIndex === realIndex}
-                                    className="flex items-center gap-1 text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-full border border-blue-100 transition-colors ml-auto disabled:opacity-50"
-                                  >
-                                    <Undo2 size={12} />
-                                    {forgivingIndex === realIndex ? 'Saving...' : 'Forgive'}
-                                  </button>
+                                  deductionStaff.status === 'Not Due' ? (
+                                    <span className="text-[10px] font-medium text-gray-400 bg-gray-50 px-2 py-1 rounded-full border border-gray-100">Running Cycle</span>
+                                  ) : (
+                                    <button
+                                      onClick={() => handleForgiveDeduction(realIndex)}
+                                      disabled={forgivingIndex === realIndex}
+                                      className="flex items-center gap-1 text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-full border border-blue-100 transition-colors ml-auto disabled:opacity-50"
+                                    >
+                                      <Undo2 size={12} />
+                                      {forgivingIndex === realIndex ? 'Saving...' : 'Forgive'}
+                                    </button>
+                                  )
                                 )}
                               </td>
                             </tr>

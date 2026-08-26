@@ -3,6 +3,13 @@ import React from 'react';
 import { View, Image, ActivityIndicator } from 'react-native';
 import { Stack, usePathname, router } from 'expo-router';
 import '../global.css';
+import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
+
+// Disable Reanimated strict mode to hide annoying component render warnings
+configureReanimatedLogger({
+  level: ReanimatedLogLevel.warn,
+  strict: false,
+});
 
 // Shared Components
 import Header from '../components/Header';
@@ -20,6 +27,7 @@ import * as Location from 'expo-location';
 import Constants from 'expo-constants';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 // Only load expo-notifications in production/dev builds (NOT in Expo Go)
 const isExpoGo = Constants.executionEnvironment === 'storeClient';
@@ -143,7 +151,12 @@ function InnerLayout() {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
 
-    const showSub = Keyboard.addListener(showEvent, () => setIsKeyboardOpen(true));
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      const height = e?.endCoordinates?.height || 0;
+      if (height > 0) {
+        setIsKeyboardOpen(true);
+      }
+    });
     const hideSub = Keyboard.addListener(hideEvent, () => setIsKeyboardOpen(false));
 
     return () => {
@@ -357,7 +370,12 @@ function InnerLayout() {
       {!hideGlobalHeader && <Header />}
 
       {/* Screen Content */}
-      <View className="flex-1">
+      <View 
+        className="flex-1"
+        style={{
+          paddingBottom: (!['/login', '/register', '/pending', '/inactive'].includes(pathname) && !isKeyboardOpen) ? 75 : 0
+        }}
+      >
         <Stack screenOptions={{ headerShown: false, animation: 'none' }}>
           <Stack.Screen name="index" />
           <Stack.Screen name="attendance" />
@@ -393,5 +411,9 @@ function InnerLayout() {
 }
 
 export default function RootLayout() {
-  return <InnerLayout />;
+  return (
+    <SafeAreaProvider>
+      <InnerLayout />
+    </SafeAreaProvider>
+  );
 }
