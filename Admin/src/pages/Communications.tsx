@@ -3,7 +3,7 @@ import {
   Search, MoreVertical, Megaphone, Pin, FileText, 
   Calendar, Paperclip, Image as ImageIcon, File, Smile, Send,
   MessageCircle, ChevronDown, ThumbsUp, MapPin, X, Video as VideoIcon,
-  Lock, Users, Plus, Settings, Trash2, UserPlus, UserMinus, ChevronRight, Edit3, Check,
+  Lock, Users, Plus, Settings, Trash2, UserPlus, UserMinus, ChevronRight, ChevronLeft, ArrowLeft, Edit3, Check,
   User, LogOut
 } from 'lucide-react';
 import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc, doc, deleteDoc, where, setDoc } from 'firebase/firestore';
@@ -759,10 +759,10 @@ export default function Communications({ branchesList = [], profileData, setShow
       
       {/* Top Tab Bar + Profile — Single Row */}
       <div className="flex items-center gap-3 mb-3">
-        <div className="flex-1 flex bg-white p-1 rounded-xl gap-1 border border-gray-200/60 shadow-sm min-w-0">
+        <div className="flex-1 flex bg-white p-1 rounded-xl gap-1 border border-gray-200/60 shadow-sm min-w-0 overflow-x-auto custom-scrollbar">
           <button
             onClick={() => setActiveTab('group')}
-            className={`flex-1 py-2 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+            className={`flex-1 py-2 px-3 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
               activeTab === 'group'
                 ? 'bg-blue-600 text-white shadow-md'
                 : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
@@ -781,7 +781,7 @@ export default function Communications({ branchesList = [], profileData, setShow
               setActiveTab('private');
               setSelectedRoomId(null);
             }}
-            className={`flex-1 py-2 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+            className={`flex-1 py-2 px-3 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
               activeTab === 'private'
                 ? 'bg-blue-600 text-white shadow-md'
                 : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
@@ -800,7 +800,7 @@ export default function Communications({ branchesList = [], profileData, setShow
               setActiveTab('direct');
               setSelectedRoomId(null);
             }}
-            className={`flex-1 py-2 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+            className={`flex-1 py-2 px-3 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
               activeTab === 'direct'
                 ? 'bg-blue-600 text-white shadow-md'
                 : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
@@ -819,7 +819,7 @@ export default function Communications({ branchesList = [], profileData, setShow
               setActiveTab('banner');
               setSelectedRoomId(null);
             }}
-            className={`flex-1 py-2 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+            className={`flex-1 py-2 px-3 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
               activeTab === 'banner'
                 ? 'bg-blue-600 text-white shadow-md'
                 : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
@@ -833,7 +833,7 @@ export default function Communications({ branchesList = [], profileData, setShow
               setActiveTab('custom');
               setSelectedRoomId(null);
             }}
-            className={`flex-1 py-2 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${
+            className={`flex-1 py-2 px-3 text-[11px] font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0 ${
               activeTab === 'custom'
                 ? 'bg-blue-600 text-white shadow-md'
                 : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
@@ -1047,7 +1047,7 @@ export default function Communications({ branchesList = [], profileData, setShow
         <div className="flex-1 flex gap-6 min-h-0 w-full">
           
           {/* Left Panel: Active Conversations List */}
-          <div className="w-80 bg-white rounded-2xl border border-gray-100 shadow-sm flex flex-col overflow-hidden shrink-0">
+          <div className={`w-full lg:w-80 bg-white rounded-2xl border border-gray-100 shadow-sm flex flex-col overflow-hidden shrink-0 ${selectedRoomId ? 'hidden lg:flex' : 'flex'}`}>
             <div className="p-4 border-b border-gray-100 bg-white">
               <h3 className="font-bold text-gray-900 mb-2.5 text-xs uppercase tracking-wider">Conversations</h3>
               <div className="relative">
@@ -1111,23 +1111,32 @@ export default function Communications({ branchesList = [], profileData, setShow
           </div>
 
           {/* Right Panel: Messages Feed */}
-          <div className="flex-1 bg-white rounded-2xl border border-gray-100 shadow-sm flex flex-col overflow-hidden min-h-0">
+          <div className={`flex-1 bg-white rounded-2xl border border-gray-100 shadow-sm flex flex-col overflow-hidden min-h-0 ${!selectedRoomId ? 'hidden lg:flex' : 'flex'}`}>
             {selectedRoomId ? (
               <>
                 {/* Header */}
-                <div className="px-6 py-4 border-b border-gray-100 bg-slate-50/30 flex justify-between items-center shrink-0">
-                  <div>
-                    <h3 className="font-black text-gray-900 text-sm">
-                      {(() => {
-                        const r = privateRooms.find(r => r.roomId === selectedRoomId);
-                        if (!r) return "";
-                        const { empA, empB } = getEmpIdsFromRoomId(r.roomId);
-                        return `${r.userAName} ↔ ${r.userBName}`;
-                      })()}
-                    </h3>
-                    <p className="text-[11px] text-gray-500 font-semibold mt-0.5">
-                      Monitoring private communication history
-                    </p>
+                <div className="px-4 lg:px-6 py-4 border-b border-gray-100 bg-slate-50/30 flex justify-between items-center shrink-0">
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setSelectedRoomId(null)}
+                      className="lg:hidden p-1.5 -ml-1 text-gray-500 hover:text-gray-700 hover:bg-gray-200/50 rounded-lg transition-colors cursor-pointer"
+                      title="Back to list"
+                    >
+                      <ArrowLeft size={18} />
+                    </button>
+                    <div>
+                      <h3 className="font-black text-gray-900 text-sm">
+                        {(() => {
+                          const r = privateRooms.find(r => r.roomId === selectedRoomId);
+                          if (!r) return "";
+                          const { empA, empB } = getEmpIdsFromRoomId(r.roomId);
+                          return `${r.userAName} ↔ ${r.userBName}`;
+                        })()}
+                      </h3>
+                      <p className="text-[11px] text-gray-500 font-semibold mt-0.5">
+                        Monitoring private communication history
+                      </p>
+                    </div>
                   </div>
                   <div className="flex items-center gap-1.5 px-3 py-1 bg-amber-50 border border-amber-100 rounded-full text-amber-700">
                     <Lock size={12} />
@@ -1136,7 +1145,7 @@ export default function Communications({ branchesList = [], profileData, setShow
                 </div>
 
                 {/* Messages feed */}
-                <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50 scroll-smooth custom-scrollbar">
+                <div className="flex-1 overflow-y-auto p-4 lg:p-6 bg-slate-50/50 scroll-smooth custom-scrollbar">
                   {selectedRoomMessages.length === 0 ? (
                     <div className="h-full flex items-center justify-center text-gray-400 text-xs font-semibold">No messages in this chat.</div>
                   ) : (
@@ -1172,7 +1181,7 @@ export default function Communications({ branchesList = [], profileData, setShow
             <div className="flex-1 flex gap-6 min-h-0 w-full">
               
               {/* Left Panel: Direct Conversations & Staff List */}
-              <div className="w-80 bg-white rounded-2xl border border-gray-100 shadow-sm flex flex-col overflow-hidden shrink-0">
+              <div className={`w-full lg:w-80 bg-white rounded-2xl border border-gray-100 shadow-sm flex flex-col overflow-hidden shrink-0 ${selectedRoomId ? 'hidden lg:flex' : 'flex'}`}>
                 <div className="p-4 border-b border-gray-100 bg-white shrink-0">
                   <h3 className="font-bold text-gray-900 mb-2.5 text-xs uppercase tracking-wider">Staff Chats</h3>
                   <div className="relative">
@@ -1281,24 +1290,33 @@ export default function Communications({ branchesList = [], profileData, setShow
               </div>
 
               {/* Right Panel: Direct Message Thread & Chat Input */}
-              <div className="flex-1 bg-white rounded-2xl border border-gray-100 shadow-sm flex flex-col overflow-hidden min-h-0">
+              <div className={`flex-1 bg-white rounded-2xl border border-gray-100 shadow-sm flex flex-col overflow-hidden min-h-0 ${!selectedRoomId ? 'hidden lg:flex' : 'flex'}`}>
                 {selectedRoomId ? (
                   <>
                     {/* Header */}
-                    <div className="px-6 py-4 border-b border-gray-100 bg-slate-50/30 flex justify-between items-center shrink-0">
-                      <div>
-                        <h3 className="font-black text-gray-900 text-sm">
-                          {(() => {
-                            const parts = selectedRoomId.split('_');
-                            const staffId = parts[2] || '';
-                            const staff = staffList.find(s => s.empId === staffId);
-                            const room = directRooms.find(r => r.roomId === selectedRoomId);
-                            return `Chat with ${staff?.name || room?.userAName || 'Staff'} (${staffId})`;
-                          })()}
-                        </h3>
-                        <p className="text-[11px] text-gray-500 font-semibold mt-0.5">
-                          Direct personal chat with field agent
-                        </p>
+                    <div className="px-4 lg:px-6 py-4 border-b border-gray-100 bg-slate-50/30 flex justify-between items-center shrink-0">
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => setSelectedRoomId(null)}
+                          className="lg:hidden p-1.5 -ml-1 text-gray-500 hover:text-gray-700 hover:bg-gray-200/50 rounded-lg transition-colors cursor-pointer"
+                          title="Back to staff list"
+                        >
+                          <ArrowLeft size={18} />
+                        </button>
+                        <div>
+                          <h3 className="font-black text-gray-900 text-sm">
+                            {(() => {
+                              const parts = selectedRoomId.split('_');
+                              const staffId = parts[2] || '';
+                              const staff = staffList.find(s => s.empId === staffId);
+                              const room = directRooms.find(r => r.roomId === selectedRoomId);
+                              return `Chat with ${staff?.name || room?.userAName || 'Staff'} (${staffId})`;
+                            })()}
+                          </h3>
+                          <p className="text-[11px] text-gray-500 font-semibold mt-0.5">
+                            Direct personal chat with field agent
+                          </p>
+                        </div>
                       </div>
                       <div className="flex items-center gap-1.5 px-3 py-1 bg-purple-50 border border-purple-100 rounded-full text-purple-700">
                         <MessageCircle size={12} />
@@ -1307,7 +1325,7 @@ export default function Communications({ branchesList = [], profileData, setShow
                     </div>
 
                     {/* Messages feed */}
-                    <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50 scroll-smooth custom-scrollbar">
+                    <div className="flex-1 overflow-y-auto p-4 lg:p-6 bg-slate-50/50 scroll-smooth custom-scrollbar">
                       {selectedRoomMessages.length === 0 ? (
                         <div className="h-full flex items-center justify-center text-gray-400 text-xs font-semibold">No messages in this chat. Start typing below!</div>
                       ) : (
@@ -1385,7 +1403,7 @@ export default function Communications({ branchesList = [], profileData, setShow
         <div className="flex-1 flex gap-6 min-h-0 w-full">
           
           {/* Left: Groups List */}
-          <div className="w-80 bg-white rounded-2xl border border-gray-100 shadow-sm flex flex-col overflow-hidden shrink-0">
+          <div className={`w-full lg:w-80 bg-white rounded-2xl border border-gray-100 shadow-sm flex flex-col overflow-hidden shrink-0 ${selectedGroupId ? 'hidden lg:flex' : 'flex'}`}>
             <div className="p-4 border-b border-gray-100 bg-white">
               <div className="flex items-center justify-between mb-2.5">
                 <h3 className="font-bold text-gray-900 text-xs uppercase tracking-wider">Custom Groups</h3>
@@ -1442,18 +1460,18 @@ export default function Communications({ branchesList = [], profileData, setShow
           </div>
 
           {/* Right: Group Chat or Settings */}
-          <div className="flex-1 bg-white rounded-2xl border border-gray-100 shadow-sm flex flex-col overflow-hidden min-w-0">
+          <div className={`flex-1 bg-white rounded-2xl border border-gray-100 shadow-sm flex flex-col overflow-hidden min-w-0 ${!selectedGroupId ? 'hidden lg:flex' : 'flex'}`}>
             {selectedGroupId && selectedGroup ? (
               showGroupSettings ? (
                 /* Group Settings Panel */
                 <div className="flex-1 flex flex-col overflow-hidden">
-                  <div className="p-5 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-indigo-50 flex items-center justify-between">
+                  <div className="p-4 lg:p-5 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-indigo-50 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <button onClick={() => setShowGroupSettings(false)} className="text-gray-500 hover:text-gray-700 cursor-pointer"><X size={18} /></button>
                       <h3 className="font-bold text-gray-900 text-sm">Group Settings</h3>
                     </div>
                   </div>
-                  <div className="flex-1 overflow-y-auto p-5 space-y-6">
+                  <div className="flex-1 overflow-y-auto p-4 lg:p-5 space-y-6">
                     {/* Rename */}
                     <div>
                       <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">Group Name</label>
@@ -1570,8 +1588,15 @@ export default function Communications({ branchesList = [], profileData, setShow
                 <>
                   {/* Header */}
                   <div className="p-4 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-indigo-50 flex items-center justify-between shrink-0">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-sm shadow-sm">
+                    <div className="flex items-center gap-2 sm:gap-3">
+                      <button 
+                        onClick={() => setSelectedGroupId(null)}
+                        className="lg:hidden p-1.5 -ml-1 text-gray-500 hover:text-gray-700 hover:bg-gray-200/50 rounded-lg transition-colors cursor-pointer"
+                        title="Back to groups"
+                      >
+                        <ArrowLeft size={18} />
+                      </button>
+                      <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-bold text-sm shadow-sm shrink-0">
                         {selectedGroup.name?.charAt(0)?.toUpperCase() || 'G'}
                       </div>
                       <div>

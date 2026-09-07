@@ -106,6 +106,8 @@ function App() {
       const branches: any[] = [];
       snapshot.forEach(doc => branches.push({ id: doc.id, ...doc.data() }));
       setBranchesList(branches);
+    }, (err) => {
+      console.error("Error fetching branches:", err);
     });
 
     // Fetch all staff
@@ -127,6 +129,8 @@ function App() {
       });
       
       setAllStaff(staff);
+    }, (err) => {
+      console.error("Error fetching staff:", err);
     });
 
     return () => {
@@ -193,6 +197,8 @@ function App() {
           }
         }
       });
+    }, (err) => {
+      console.error("Error in auto punch out listener:", err);
     });
 
     return () => {
