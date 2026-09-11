@@ -2,8 +2,21 @@ node_modules/
 .DS_Store
 *.env
 .env
+.env.*
 Admin/.env
 StaffApp/.env
 dist/
 build/
 .expo/
+
+# Sensitive Firebase & Keys
+google-services.json
+GoogleService-Info.plist
+firebase.rules
+firestore.rules
+storage.rules
+*.keystore
+*.jks
+*.pem
+service-account*.json
+

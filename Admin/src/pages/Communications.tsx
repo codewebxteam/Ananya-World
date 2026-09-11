@@ -6,9 +6,41 @@ import {
   Lock, Users, Plus, Settings, Trash2, UserPlus, UserMinus, ChevronRight, ChevronLeft, ArrowLeft, Edit3, Check,
   User, LogOut
 } from 'lucide-react';
-import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc, doc, deleteDoc, where, setDoc } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc, doc, deleteDoc, where, setDoc, getDoc, getDocs } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { uploadToImageKitWithDetails, deleteFromImageKit } from '../services/imagekit';
+
+const sendExpoPushNotification = async (pushToken: string, title: string, body: string, extraData: any = {}) => {
+  if (!pushToken || typeof pushToken !== 'string') return;
+  const cleanToken = pushToken.trim();
+  if (!cleanToken.startsWith('ExponentPushToken') && !cleanToken.startsWith('ExpoPushToken')) {
+    console.warn('[PushNotification] Invalid push token format:', cleanToken);
+    return;
+  }
+  try {
+    const res = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Accept-encoding': 'gzip, deflate',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        to: cleanToken,
+        sound: 'default',
+        title: title || 'Ananya World',
+        body: body || 'New Message',
+        data: extraData,
+        priority: 'high',
+        channelId: 'default'
+      }),
+    });
+    const resData = await res.json();
+    console.log('[PushNotification Result]:', resData);
+  } catch (e) {
+    console.error('Push notification error:', e);
+  }
+};
 
 const COMMON_EMOJIS = ["😀", "😂", "🥰", "😎", "🤔", "🙌", "👍", "🙏", "🔥", "💯", "🎉", "❤️"];
 
@@ -451,13 +483,30 @@ export default function Communications({ branchesList = [], profileData, setShow
     }
     setIsUpdatingBanner(true);
     try {
+      const bTitle = bannerTitle.trim() || "Daily Update";
+      const bMessage = bannerMessage.trim();
       const docBannerRef = doc(db, 'daily_banner', 'current');
       await setDoc(docBannerRef, {
-        title: bannerTitle.trim() || "Daily Update",
-        message: bannerMessage.trim(),
+        title: bTitle,
+        message: bMessage,
         updatedAt: serverTimestamp()
       });
-      alert("Daily Banner updated successfully!");
+
+      // Send Push Notification to all staff members
+      try {
+        const qStaff = query(collection(db, 'users'), where('role', '==', 'staff'));
+        const snap = await getDocs(qStaff);
+        snap.forEach(docSnap => {
+          const uData = docSnap.data();
+          if (uData.pushToken) {
+            sendExpoPushNotification(uData.pushToken, 'Ananya World', bMessage, { type: 'daily_banner' });
+          }
+        });
+      } catch (pushErr) {
+        console.error("Error sending daily banner push notifications:", pushErr);
+      }
+
+      alert("Daily Banner updated & Push Notification sent to all staff!");
     } catch (error: any) {
       alert("Error updating banner: " + error.message);
     } finally {
@@ -502,6 +551,49 @@ export default function Communications({ branchesList = [], profileData, setShow
 
     try {
       await addDoc(collection(db, 'communications'), msgDoc);
+
+      // Send Push Notification to recipient staff
+      try {
+        if (activeTab === 'direct' && selectedRoomId) {
+          const parts = selectedRoomId.split('_').filter(p => p !== 'private' && p.toLowerCase() !== 'admin');
+          const targetId = parts[0] || '';
+          let token = '';
+
+          if (targetId) {
+            const targetStaff = staffList.find(s => s.empId === targetId || s.id === targetId || s.uid === targetId);
+            token = targetStaff?.pushToken || '';
+
+            if (!token) {
+              const uSnap = await getDoc(doc(db, 'users', targetId));
+              if (uSnap.exists()) token = uSnap.data()?.pushToken || '';
+            }
+            if (!token) {
+              const qUser = query(collection(db, 'users'), where('empId', '==', targetId));
+              const uDocs = await getDocs(qUser);
+              if (!uDocs.empty) token = uDocs.docs[0].data()?.pushToken || '';
+            }
+            if (!token) {
+              const sSnap = await getDoc(doc(db, 'staff', targetId));
+              if (sSnap.exists()) token = sSnap.data()?.pushToken || '';
+            }
+          }
+
+          if (token) {
+            sendExpoPushNotification(token, 'Ananya World', msgText || '[Attachment]', { type: 'chat', roomId: selectedRoomId });
+          } else {
+            console.warn('[PushNotification] No push token found for recipient:', targetId);
+          }
+        } else {
+          // Broadcast to all staff for group/announcement messages
+          staffList.forEach(s => {
+            if (s.pushToken) {
+              sendExpoPushNotification(s.pushToken, 'Ananya World', msgText || '[Attachment]', { type: 'chat' });
+            }
+          });
+        }
+      } catch (pErr) {
+        console.error("Error sending message push notification:", pErr);
+      }
 
       if (activeTab === 'direct' && selectedRoomId) {
         // Update or set room info

@@ -2,7 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   View, Text, ScrollView, TouchableOpacity, Alert, 
-  Modal, TextInput, ActivityIndicator 
+  Modal, TextInput, ActivityIndicator, Linking,
+  KeyboardAvoidingView, Platform, Keyboard, TouchableWithoutFeedback 
 } from 'react-native';
 import { 
   MapPin, LogIn, LogOut, 
@@ -21,6 +22,14 @@ import {
 import { LOCATION_TASK_NAME } from './_layout';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
+import Constants from 'expo-constants';
+const isExpoGo = Constants.executionEnvironment === 'storeClient';
+let Notifications: any = null;
+if (!isExpoGo) {
+  try {
+    Notifications = require('expo-notifications');
+  } catch {}
+}
 
 const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
   const R = 6371e3; // Earth's radius in meters
@@ -81,6 +90,10 @@ let homeBranchCache: { branchId: string; latitude: number; longitude: number; ra
 
 const checkAndAutoPunchOut = async (docId: string, data: any, shiftEndTime: string) => {
   if (!data.punchIn || data.punchOut) return;
+
+  // Field Staff stays punched-in 24/7 continuous - bypass auto punch out
+  const isField = (data.dept || data.staffType || '').includes('Field');
+  if (isField) return;
 
   const dateStr = data.date; // e.g. "2026-08-16"
   const [year, month, day] = dateStr.split('-').map(Number);
@@ -156,7 +169,109 @@ export default function HomeScreen() {
   const [isExtraDuty, setIsExtraDuty] = useState(globalHomeCache.isExtraDuty);
   const [isCompanyHoliday, setIsCompanyHoliday] = useState(globalHomeCache.isCompanyHoliday);
   const [holidayData, setHolidayData] = useState<{ name: string; wishMessage: string } | null>(globalHomeCache.holidayData);
+  const [showFixSettings, setShowFixSettings] = useState(false);
   const [activeSwap, setActiveSwap] = useState<any | null>(globalHomeCache.activeSwap || null);
+  const [hasLocationPermissions, setHasLocationPermissions] = useState(true);
+
+  const ensureFieldStaffAutoPunchIn = async (user: any) => {
+    if (!user) return;
+    const isField = (user.staffType || user.department || '').includes('Field');
+    if (!isField) return;
+
+    const today = new Date().toISOString().split('T')[0];
+    const attendanceId = `${user.empId}_${today}`;
+    const attRef = doc(db, 'attendance', attendanceId);
+
+    try {
+      const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
+      let coords: { latitude: number; longitude: number } | null = null;
+      let currentAddr = 'Field Duty Active';
+
+      if (fgStatus === 'granted') {
+        try {
+          const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          coords = { latitude: location.coords.latitude, longitude: location.coords.longitude };
+          const geocode = await Location.reverseGeocodeAsync({ latitude: location.coords.latitude, longitude: location.coords.longitude });
+          if (geocode.length > 0) {
+            const addr = geocode[0];
+            currentAddr = [addr.name, addr.street, addr.city, addr.region].filter(Boolean).join(', ');
+          }
+        } catch (locErr) {
+          console.log("Current location fetch error for auto punch in:", locErr);
+        }
+      }
+
+      const attSnap = await getDoc(attRef);
+      const now = new Date();
+
+      if (!attSnap.exists() || !attSnap.data().punchIn) {
+        await setDoc(attRef, {
+          staffId: user.empId,
+          name: user.name,
+          dept: user.staffType || user.department || 'Field Staff',
+          avatar: user.avatar || null,
+          date: today,
+          punchIn: now.toISOString(),
+          locationIn: currentAddr,
+          currentLatitude: coords?.latitude || null,
+          currentLongitude: coords?.longitude || null,
+          currentLocation: currentAddr,
+          lastLocationUpdate: now.toISOString(),
+          status: 'Present',
+          branchId: user.branchId || ''
+        }, { merge: true });
+
+        setPunchInTime(now);
+        globalHomeCache.punchInTime = now;
+        await AsyncStorage.setItem(`punchIn_${today}`, now.toISOString());
+      } else {
+        if (coords) {
+          await updateDoc(attRef, {
+            currentLatitude: coords.latitude,
+            currentLongitude: coords.longitude,
+            currentLocation: currentAddr,
+            lastLocationUpdate: now.toISOString()
+          });
+        }
+        const existingIn = new Date(attSnap.data().punchIn);
+        setPunchInTime(existingIn);
+        globalHomeCache.punchInTime = existingIn;
+      }
+
+      try {
+        const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+        if (bgStatus === 'granted') {
+          setHasLocationPermissions(true);
+          const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
+          if (!hasStarted) {
+            await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+              accuracy: Location.Accuracy.High,
+              timeInterval: 15000,
+              distanceInterval: 15,
+              deferredUpdatesInterval: 15000,
+              deferredUpdatesDistance: 15,
+              showsBackgroundLocationIndicator: true,
+              pausesUpdatesAutomatically: false,
+              activityType: Location.ActivityType.Other,
+              foregroundService: {
+                notificationTitle: "Ananya World",
+                notificationBody: "Ananya World",
+                notificationColor: "#003B95",
+                killServiceOnDestroy: false
+              }
+            });
+          }
+        } else {
+          setHasLocationPermissions(false);
+        }
+      } catch (bgErr) {
+        console.log("Background tracking start error:", bgErr);
+        setHasLocationPermissions(false);
+      }
+    } catch (err) {
+      console.error("Auto punch in error for Field Staff:", err);
+    }
+  };
 
   useEffect(() => {
     let unsubAtt: any;
@@ -177,7 +292,41 @@ export default function HomeScreen() {
           const parsed = JSON.parse(storedUser);
           setUserData(parsed);
           globalHomeCache.userData = parsed;
-          setUserRole((parsed.staffType || parsed.department || 'Office').includes('Field') ? 'Field' : 'Office');
+          const isField = (parsed.staffType || parsed.department || 'Office').includes('Field');
+          setUserRole(isField ? 'Field' : 'Office');
+          if (isField) {
+            ensureFieldStaffAutoPunchIn(parsed);
+          }
+
+          if (Notifications && parsed) {
+            Notifications.getPermissionsAsync().then(async (perm: any) => {
+              if (perm?.status === 'granted') {
+                const projectId = Constants.expoConfig?.extra?.eas?.projectId || 'f4f9c5f5-fbb0-4058-a9a9-659e6c04bf1e';
+                const tokenRes = await Notifications.getExpoPushTokenAsync({ projectId }).catch(() => null);
+                const pToken = tokenRes?.data;
+                if (pToken) {
+                  const payload = { pushToken: pToken, updatedAt: new Date().toISOString() };
+                  if (parsed.uid) setDoc(doc(db, 'users', parsed.uid), payload, { merge: true }).catch(() => {});
+                  if (parsed.empId) {
+                    setDoc(doc(db, 'users', parsed.empId), payload, { merge: true }).catch(() => {});
+                    setDoc(doc(db, 'staff', parsed.empId), payload, { merge: true }).catch(() => {});
+                  }
+                }
+              }
+            }).catch(() => {});
+          }
+
+          // Check if within 24 hours of first install/open
+          try {
+            const installTimestampStr = await AsyncStorage.getItem('app_install_timestamp');
+            let installTimestamp = installTimestampStr ? parseInt(installTimestampStr, 10) : 0;
+            if (!installTimestamp) {
+              installTimestamp = Date.now();
+              await AsyncStorage.setItem('app_install_timestamp', installTimestamp.toString());
+            }
+            const isWithin24Hours = (Date.now() - installTimestamp) < 24 * 60 * 60 * 1000;
+            setShowFixSettings(isWithin24Hours);
+          } catch {}
 
           const todayStr = new Date().toISOString().split('T')[0];
 
@@ -273,6 +422,36 @@ export default function HomeScreen() {
                 setPunchOutTime(null);
                 globalHomeCache.punchOutTime = null;
                 await AsyncStorage.removeItem(`punchOut_${today}`);
+
+                // Resume background tracking if currently punched in (for Office Staff as well)
+                if (attData.punchIn) {
+                  try {
+                    const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+                    if (bgStatus === 'granted') {
+                      const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
+                      if (!hasStarted) {
+                        await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+                          accuracy: Location.Accuracy.High,
+                          timeInterval: 15000,
+                          distanceInterval: 15,
+                          deferredUpdatesInterval: 15000,
+                          deferredUpdatesDistance: 15,
+                          showsBackgroundLocationIndicator: true,
+                          pausesUpdatesAutomatically: false,
+                          activityType: Location.ActivityType.Other,
+                          foregroundService: {
+                            notificationTitle: "Ananya World",
+                            notificationBody: "Ananya World",
+                            notificationColor: "#003B95",
+                            killServiceOnDestroy: false
+                          }
+                        });
+                      }
+                    }
+                  } catch (bgErr) {
+                    console.log("Failed to resume background tracking in initData", bgErr);
+                  }
+                }
               }
             } else {
               setPunchInTime(null);
@@ -936,16 +1115,19 @@ export default function HomeScreen() {
             const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
             if (bgStatus === 'granted') {
               await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-                accuracy: Location.Accuracy.Balanced,
-                timeInterval: 20000,
-                distanceInterval: 20,
-                deferredUpdatesInterval: 20000,
-                deferredUpdatesDistance: 20,
+                accuracy: Location.Accuracy.High,
+                timeInterval: 15000,
+                distanceInterval: 15,
+                deferredUpdatesInterval: 15000,
+                deferredUpdatesDistance: 15,
                 showsBackgroundLocationIndicator: true,
+                pausesUpdatesAutomatically: false,
+                activityType: Location.ActivityType.Other,
                 foregroundService: {
-                  notificationTitle: "Live Tracking Active",
-                  notificationBody: "Your location is being tracked for duty.",
-                  notificationColor: "#138A43"
+                  notificationTitle: "Ananya World",
+                  notificationBody: "Ananya World",
+                  notificationColor: "#003B95",
+                  killServiceOnDestroy: false
                 }
               });
             }
@@ -1176,12 +1358,12 @@ export default function HomeScreen() {
     }
     if (userRole === 'Field') {
       return {
-        bgClass: 'bg-[#EFF6FF] border-blue-100',
-        iconBgClass: 'bg-[#3B82F6]',
+        bgClass: 'bg-[#F0FDF4] border-green-100',
+        iconBgClass: 'bg-[#138A43]',
         icon: <Globe color="white" size={20} />,
-        title: 'Punch In to Start Duty',
-        subtitle: 'Your location will be acquired.',
-        disabled: false
+        title: 'Field Duty Active',
+        subtitle: 'Live location automatically shared for admin tracking.',
+        disabled: true
       };
     }
     if (userRole === 'Office' && isNearOffice) {
@@ -1232,18 +1414,18 @@ export default function HomeScreen() {
           <View className="flex-row justify-between items-center mb-4">
             <View className="flex-row items-center gap-3">
               <Text className="text-black text-[16px] font-bold">Duty Status</Text>
-              <View className={`flex-row items-center px-2 py-1 rounded-full gap-1 ${punchInTime && !punchOutTime ? 'bg-[#E6F4EA]' : 'bg-gray-100'}`}>
-                <View className={`w-2 h-2 rounded-full ${punchInTime && !punchOutTime ? 'bg-[#138A43]' : 'bg-gray-400'}`} />
-                <Text className={`text-xs font-semibold ${punchInTime && !punchOutTime ? 'text-[#138A43]' : 'text-gray-500'}`}>
-                  {punchInTime && !punchOutTime ? 'Online' : 'Offline'}
+              <View className={`flex-row items-center px-2 py-1 rounded-full gap-1 ${userRole === 'Field' || (punchInTime && !punchOutTime) ? 'bg-[#E6F4EA]' : 'bg-gray-100'}`}>
+                <View className={`w-2 h-2 rounded-full ${userRole === 'Field' || (punchInTime && !punchOutTime) ? 'bg-[#138A43]' : 'bg-gray-400'}`} />
+                <Text className={`text-xs font-semibold ${userRole === 'Field' || (punchInTime && !punchOutTime) ? 'text-[#138A43]' : 'text-gray-500'}`}>
+                  {userRole === 'Field' ? 'Online' : punchInTime && !punchOutTime ? 'Online' : 'Offline'}
                 </Text>
               </View>
             </View>
             <View className="flex-row items-center gap-1">
-              <Text className={`text-xs font-medium ${punchInTime && !punchOutTime ? 'text-[#138A43]' : 'text-gray-500'}`}>
-                {punchInTime && !punchOutTime ? 'You are on duty' : 'Not on duty'}
+              <Text className={`text-xs font-medium ${userRole === 'Field' || (punchInTime && !punchOutTime) ? 'text-[#138A43]' : 'text-gray-500'}`}>
+                {userRole === 'Field' ? 'Field Duty Active' : punchInTime && !punchOutTime ? 'You are on duty' : 'Not on duty'}
               </Text>
-              <Signal color={punchInTime && !punchOutTime ? "#138A43" : "#6B7280"} size={14} strokeWidth={3} />
+              <Signal color={userRole === 'Field' || (punchInTime && !punchOutTime) ? "#138A43" : "#6B7280"} size={14} strokeWidth={3} />
             </View>
           </View>
 
@@ -1262,18 +1444,61 @@ export default function HomeScreen() {
             </View>
           )}
 
+          {/* Permission warning banner if missing */}
+          {!hasLocationPermissions && userRole === 'Field' && (
+            <TouchableOpacity 
+              onPress={() => ensureFieldStaffAutoPunchIn(userData)}
+              className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 flex-row items-center gap-3 mb-4"
+            >
+              <View className="w-9 h-9 rounded-full bg-amber-100 items-center justify-center">
+                <ShieldAlert color="#D97706" size={20} />
+              </View>
+              <View className="flex-1">
+                <Text className="text-amber-900 font-bold text-xs">Background Location Access Needed</Text>
+                <Text className="text-amber-700 text-[10px] mt-0.5">Tap here to allow background location permissions for field duty.</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+
+          {/* Battery Saver Optimization Card for Field Staff (Only shown within 24h of install) */}
+          {userRole === 'Field' && showFixSettings && (
+            <TouchableOpacity 
+              onPress={() => Linking.openSettings()}
+              activeOpacity={0.8}
+              className="bg-blue-50/70 border border-blue-100 rounded-2xl p-3 flex-row items-center justify-between mb-4"
+            >
+              <View className="flex-row items-center gap-2.5 flex-1 pr-2">
+                <View className="w-8 h-8 rounded-full bg-blue-100 items-center justify-center">
+                  <Zap color="#2563EB" size={16} />
+                </View>
+                <View className="flex-1">
+                  <Text className="text-blue-900 font-bold text-xs">Prevent Phone From Killing App</Text>
+                  <Text className="text-blue-700 text-[10px] mt-0.5">Set Location to 'Allow All The Time' & Battery to 'Unrestricted'.</Text>
+                </View>
+              </View>
+              <View className="bg-blue-600 px-3 py-1.5 rounded-xl">
+                <Text className="text-white text-[10px] font-bold">Fix Settings</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+
           {/* Check-in Banner */}
           <View className={`rounded-2xl p-4 flex-row justify-between items-center mb-4 border ${bannerData.bgClass}`}>
-            <View className="flex-row items-center gap-3">
+            <View className="flex-row items-center gap-3 flex-1 pr-2">
               <View className={`w-10 h-10 rounded-full items-center justify-center ${bannerData.iconBgClass}`}>
                 {bannerData.icon}
               </View>
-              <View>
+              <View className="flex-1">
                 <Text className="text-black font-bold text-[15px]">{bannerData.title}</Text>
                 <Text className="text-gray-500 text-[11px] mt-0.5">{bannerData.subtitle}</Text>
               </View>
             </View>
-            {punchInTime && !punchOutTime ? (
+            {userRole === 'Field' ? (
+              <View className="bg-emerald-100 border border-emerald-200 rounded-xl px-3 py-1.5 items-center justify-center">
+                <Text className="text-emerald-800 text-[10px] font-black uppercase tracking-wider">Always Active</Text>
+                <Text className="text-emerald-600 text-[9px] font-bold mt-0.5">Auto Shared</Text>
+              </View>
+            ) : punchInTime && !punchOutTime ? (
               <View className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2 items-center justify-center min-w-[110px]">
                 <Text className="text-amber-800 text-[9px] font-black uppercase tracking-wider">Auto Out In</Text>
                 <Text className="text-amber-700 text-xs font-black mt-0.5">{countdownText}</Text>
@@ -1298,6 +1523,36 @@ export default function HomeScreen() {
               <Plane color="#8B5CF6" size={24} strokeWidth={2} className="mb-1" />
               <Text className="text-purple-700 text-sm font-bold">You are on Approved Leave today</Text>
               <Text className="text-purple-500 text-[10px] mt-0.5">Punch operations are disabled</Text>
+            </View>
+          ) : userRole === 'Field' ? (
+            <View className="flex-row justify-between items-center pt-2">
+              <View>
+                <Text className="text-black font-bold mb-2">Today's Punch</Text>
+                <View className="flex-row items-center gap-2">
+                  <LogIn color="#138A43" size={20} strokeWidth={2.5} />
+                  <View>
+                    <Text className="text-gray-500 text-[11px]">Punch In</Text>
+                    <Text className="text-black text-xs font-bold">{punchInTime ? formatTime(punchInTime) : 'Always Active'}</Text>
+                  </View>
+                </View>
+              </View>
+              
+              <View className="h-10 w-[1px] bg-gray-200 mt-6" />
+
+              <View className="mt-6 flex-row items-center gap-2">
+                <Globe color="#2563EB" size={20} strokeWidth={2.5} />
+                <View>
+                  <Text className="text-gray-500 text-[11px]">Duty Status</Text>
+                  <Text className="text-blue-600 text-xs font-bold">Always Active</Text>
+                </View>
+              </View>
+
+              <View className="h-10 w-[1px] bg-gray-200 mt-6" />
+
+              <View className="mt-6 items-end">
+                <Text className="text-gray-500 text-[11px] mb-0.5">GPS Location</Text>
+                <Text className="text-green-600 text-xs font-bold">Auto Shared</Text>
+              </View>
             </View>
           ) : (
             <View className="flex-row justify-between items-center pt-2">
@@ -1410,11 +1665,21 @@ export default function HomeScreen() {
       </View>
 
       {/* Leave Request Form Modal */}
-      <Modal visible={showLeaveModal} transparent={true} animationType="slide" onRequestClose={() => setShowLeaveModal(false)}>
-        <View className="flex-1 bg-black/50 justify-end">
-          <View className="bg-white rounded-t-[28px] p-6 max-h-[90%]">
-            
-            {/* Modal Header */}
+      <Modal 
+        visible={showLeaveModal} 
+        transparent={true} 
+        animationType="slide" 
+        statusBarTranslucent={true}
+        onRequestClose={() => setShowLeaveModal(false)}
+      >
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+        >
+          <View className="flex-1 bg-black/50 justify-end">
+            <View className="bg-white rounded-t-[28px] p-6 max-h-[90%]">
+              
+              {/* Modal Header */}
             <View className="flex-row justify-between items-center mb-5 pb-3 border-b border-gray-100">
               <View className="flex-row items-center gap-2">
                 <Plane color="#22C55E" size={20} strokeWidth={2.5} />
@@ -1427,7 +1692,11 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false}>
+            <ScrollView 
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 20 }}
+            >
               
               {/* Prefilled User Details */}
               <View className="bg-gray-50 rounded-xl p-3.5 mb-4 border border-gray-100 flex-row justify-between">
@@ -1561,7 +1830,8 @@ export default function HomeScreen() {
             </ScrollView>
           </View>
         </View>
-      </Modal>
-    </ScrollView>
-  );
+      </KeyboardAvoidingView>
+    </Modal>
+  </ScrollView>
+);
 }

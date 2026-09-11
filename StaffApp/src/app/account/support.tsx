@@ -110,7 +110,7 @@ export default function SupportScreen() {
               <Mail color="#208AEF" size={24} strokeWidth={2} />
             </View>
             <Text className="text-gray-900 font-bold text-sm">Email</Text>
-            <Text className="text-gray-400 text-[10px] mt-1">24/7 Support</Text>
+            <Text className="text-gray-400 text-[10px] mt-1">Email Support</Text>
           </TouchableOpacity>
         </View>
 

@@ -76,12 +76,13 @@ export default function RegisterScreen() {
   return (
     <KeyboardAvoidingView 
       style={{ flex: 1, backgroundColor: '#F5F7FA' }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
       <StatusBar barStyle="light-content" />
       
       <ScrollView 
-        contentContainerStyle={{ flexGrow: 1, paddingBottom: Platform.OS === 'ios' ? 40 : 100 }}
+        contentContainerStyle={{ flexGrow: 1, paddingBottom: Platform.OS === 'ios' ? 40 : 120 }}
         bounces={false}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}

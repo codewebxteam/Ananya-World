@@ -2,7 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   View, Text, ScrollView, TouchableOpacity, Alert, 
-  ActivityIndicator, Modal, TextInput, SafeAreaView
+  ActivityIndicator, Modal, TextInput, SafeAreaView,
+  KeyboardAvoidingView, Platform, Keyboard, TouchableWithoutFeedback
 } from 'react-native';
 import { 
   Plane, Calendar, ClipboardList, CheckCircle2, 
@@ -355,17 +356,32 @@ export default function LeavesScreen() {
       </ScrollView>
 
       {/* Apply Leave Modal */}
-      <Modal visible={showApplyModal} transparent={true} animationType="slide" onRequestClose={() => setShowApplyModal(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-          <View className="bg-white rounded-t-[32px] p-6 min-h-[480px]">
-            <View className="flex-row justify-between items-center mb-6">
+      <Modal 
+        visible={showApplyModal} 
+        transparent={true} 
+        animationType="slide" 
+        statusBarTranslucent={true}
+        onRequestClose={() => setShowApplyModal(false)}
+      >
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}
+        >
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+            <View className="bg-white rounded-t-[32px] p-6 max-h-[90%]">
+              <View className="flex-row justify-between items-center mb-6">
               <Text className="text-black text-xl font-black">Apply for Leave</Text>
               <TouchableOpacity onPress={() => setShowApplyModal(false)} className="p-1 rounded-full bg-gray-100">
                 <X color="#6B7280" size={20} />
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} className="space-y-4">
+            <ScrollView 
+              showsVerticalScrollIndicator={false} 
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{ paddingBottom: 20 }}
+              className="space-y-4"
+            >
               {/* Leave Type selector */}
               <View className="mb-4">
                 <Text className="text-xs font-bold text-gray-400 mb-2 uppercase tracking-wider">Leave Duration</Text>
@@ -433,16 +449,18 @@ export default function LeavesScreen() {
 
               {/* Reason */}
               <View className="mb-6">
-                <Text className="text-xs font-bold text-gray-400 mb-1 uppercase tracking-wider">Reason for Leave</Text>
-                <View className="bg-[#F8FAFC] border border-gray-100 rounded-xl px-3 py-2 shadow-sm min-h-[90px]">
+                <Text className="text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wider">Reason for Leave</Text>
+                <View className="bg-white border border-gray-300 rounded-xl px-3.5 py-2.5 shadow-sm min-h-[100px]">
                   <TextInput 
                     multiline
+                    numberOfLines={4}
                     value={leaveReason}
                     onChangeText={setLeaveReason}
                     placeholder="Provide a reason for the leave request..."
-                    placeholderTextColor="#9CA3AF"
-                    className="text-black text-sm font-medium"
-                    style={{ textAlignVertical: 'top' }}
+                    placeholderTextColor="#94A3B8"
+                    selectionColor="#208AEF"
+                    className="text-slate-900 text-sm font-semibold"
+                    style={{ color: '#0F172A', textAlignVertical: 'top', minHeight: 80, fontSize: 14 }}
                   />
                 </View>
               </View>
@@ -461,7 +479,8 @@ export default function LeavesScreen() {
             </ScrollView>
           </View>
         </View>
-      </Modal>
+      </KeyboardAvoidingView>
+    </Modal>
 
       {/* Calendar Date Picker Modal */}
       <Modal

@@ -163,7 +163,8 @@ export default function BankDetailsScreen() {
   return (
     <KeyboardAvoidingView 
       style={{ flex: 1 }} 
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
       className="bg-[#F5F7FA]"
     >
       {/* Custom Header */}

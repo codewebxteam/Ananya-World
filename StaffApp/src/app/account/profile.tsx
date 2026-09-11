@@ -192,7 +192,8 @@ export default function ProfileScreen() {
   return (
     <KeyboardAvoidingView 
       style={{ flex: 1, backgroundColor: '#F5F7FA' }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
       {/* Custom Header */}
       <View className="bg-white pt-12 pb-4 px-4 flex-row items-center justify-between border-b border-gray-100 shadow-sm z-10">

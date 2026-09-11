@@ -117,7 +117,7 @@ export default function SecurityScreen() {
   return (
     <KeyboardAvoidingView 
       style={{ flex: 1, backgroundColor: '#F5F7FA' }}
-      behavior="padding"
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 20}
     >
       {/* Custom Header */}
@@ -135,7 +135,7 @@ export default function SecurityScreen() {
       <ScrollView 
         className="flex-1"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 40, paddingTop: 20 }}
+        contentContainerStyle={{ paddingBottom: 100, paddingTop: 20 }}
         keyboardShouldPersistTaps="handled"
       >
         <View className="px-4 mb-6">

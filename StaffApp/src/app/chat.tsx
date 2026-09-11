@@ -27,9 +27,107 @@ const Notifications: any = !isExpoGo ? require('expo-notifications') : null;
 
 import * as ExpoAudio from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc, doc, increment, deleteDoc, setDoc } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc, doc, increment, deleteDoc, setDoc, getDoc, getDocs, where } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
 import { uploadToImageKitWithDetails, uploadBase64ToImageKit, deleteFromImageKit } from '../utils/imagekit';
+
+const sendExpoPushNotification = async (pushToken: string, title: string, body: string, extraData: any = {}) => {
+  if (!pushToken || typeof pushToken !== 'string') return;
+  const cleanToken = pushToken.trim();
+  if (!cleanToken.startsWith('ExponentPushToken') && !cleanToken.startsWith('ExpoPushToken')) {
+    console.warn('[PushNotification] Invalid push token format:', cleanToken);
+    return;
+  }
+  try {
+    const res = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Accept-encoding': 'gzip, deflate',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        to: cleanToken,
+        sound: 'default',
+        title: title || 'Ananya World',
+        body: body || 'New Message',
+        data: extraData,
+        priority: 'high',
+        channelId: 'default'
+      }),
+    });
+    const resData = await res.json();
+    console.log('[PushNotification Result]:', resData);
+  } catch (e) {
+    console.error('Push notification error:', e);
+  }
+};
+
+const findPushToken = async (empId: string, staffArr: any[]): Promise<string | null> => {
+  // 1. Check local staff list first (fastest)
+  const localStaff = staffArr.find(st => st.empId === empId || st.id === empId);
+  if (localStaff?.pushToken) return localStaff.pushToken;
+
+  // 2. Check users/{empId} document
+  try {
+    const uSnap = await getDoc(doc(db, 'users', empId));
+    if (uSnap.exists() && uSnap.data()?.pushToken) return uSnap.data()!.pushToken;
+  } catch {}
+
+  // 3. Check staff/{empId} document
+  try {
+    const sSnap = await getDoc(doc(db, 'staff', empId));
+    if (sSnap.exists() && sSnap.data()?.pushToken) return sSnap.data()!.pushToken;
+  } catch {}
+
+  // 4. Query users collection by empId field
+  try {
+    const qUser = query(collection(db, 'users'), where('empId', '==', empId));
+    const uDocs = await getDocs(qUser);
+    if (!uDocs.empty && uDocs.docs[0].data()?.pushToken) return uDocs.docs[0].data().pushToken;
+  } catch {}
+
+  return null;
+};
+
+const sendPushToParticipants = async (msgText: string, authorName: string, authorId: string, isRoomPrivate: boolean, isCustomGroup: boolean, partner: any, staffArr: any[]) => {
+  try {
+    const textPreview = msgText ? msgText : '[Attachment]';
+
+    if (isRoomPrivate && partner) {
+      // === 1-on-1 PRIVATE CHAT ===
+      const targetToken = await findPushToken(partner.empId || partner.id, staffArr);
+      if (targetToken) {
+        await sendExpoPushNotification(targetToken, 'Ananya World', `${authorName}: ${textPreview}`, { type: 'chat', roomId: 'private' });
+      }
+    } else if (isCustomGroup && partner && partner.members) {
+      // === CUSTOM GROUP CHAT ===
+      const memberIds = partner.members.filter((m: string) => m !== authorId);
+      for (const mId of memberIds) {
+        const token = await findPushToken(mId, staffArr);
+        if (token) {
+          await sendExpoPushNotification(token, 'Ananya World', `${partner.name || 'Group'} (${authorName}): ${textPreview}`, { type: 'chat' });
+        }
+      }
+    } else {
+      // === MAIN GROUP CHAT (roomId === 'group') ===
+      // Send push notification to ALL other staff members
+      const sentTokens = new Set<string>(); // Avoid duplicate pushes
+      for (const staff of staffArr) {
+        const empId = staff.empId || staff.id;
+        if (empId === authorId) continue; // Skip sender
+
+        const token = staff.pushToken || await findPushToken(empId, staffArr);
+        if (token && !sentTokens.has(token)) {
+          sentTokens.add(token);
+          await sendExpoPushNotification(token, 'Ananya World', `${authorName}: ${textPreview}`, { type: 'chat', roomId: 'group' });
+        }
+      }
+    }
+  } catch (err) {
+    console.log("Error sending push notifications for chat message:", err);
+  }
+};
 
 const COMMON_EMOJIS = ["😀", "😂", "🥰", "😎", "🤔", "🙌", "👍", "🙏", "🔥", "💯", "🎉", "❤️"];
 
@@ -350,6 +448,7 @@ export default function ChatScreen() {
 
         try {
             await addDoc(collection(db, 'communications'), msgDoc);
+            sendPushToParticipants(msgText, userData.name, userData.empId, isRoomPrivate, isCustomGroup, activePartner, staffList);
             
             if (isRoomPrivate && activePartner && activeRoomId) {
                 const roomRef = doc(db, 'private_rooms', activeRoomId);

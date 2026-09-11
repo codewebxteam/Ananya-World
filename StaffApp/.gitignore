@@ -42,3 +42,14 @@ example
 # generated native folders
 /ios
 /android
+
+# Firebase & Sensitive Credentials
+google-services.json
+GoogleService-Info.plist
+firebase.rules
+firestore.rules
+storage.rules
+*-firebase-*.json
+service-account*.json
+*.keystore
+

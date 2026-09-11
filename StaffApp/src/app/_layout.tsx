@@ -25,25 +25,27 @@ import { Briefcase } from 'lucide-react-native';
 import * as TaskManager from 'expo-task-manager';
 import * as Location from 'expo-location';
 import Constants from 'expo-constants';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, setDoc, collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-// Only load expo-notifications in production/dev builds (NOT in Expo Go)
 const isExpoGo = Constants.executionEnvironment === 'storeClient';
 let Notifications: any = null;
 if (!isExpoGo) {
-  Notifications = require('expo-notifications');
-  // Configure foreground notification behavior with sound enabled
-  Notifications?.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowAlert: true,
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound: true,
-      shouldSetBadge: true,
-    }),
-  });
+  try {
+    Notifications = require('expo-notifications');
+    Notifications?.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+      }),
+    });
+  } catch (e) {
+    console.log("Failed to load expo-notifications:", e);
+  }
 }
 
 export const LOCATION_TASK_NAME = 'background-location-task';
@@ -78,12 +80,17 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
           }
         } catch {}
 
-        await updateDoc(attRef, {
+        await setDoc(attRef, {
+          staffId: userData.empId,
+          name: userData.name,
+          dept: userData.staffType || userData.department || 'General',
+          avatar: userData.avatar || null,
+          date: todayStr,
           currentLatitude: lat,
           currentLongitude: lng,
           currentLocation: currentAddr,
           lastLocationUpdate: new Date().toISOString()
-        });
+        }, { merge: true });
       } catch (err) {
         console.log("Failed to update background location:", err);
       }
@@ -94,6 +101,12 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
 function InnerLayout() {
   const pathname = usePathname();
   const tabHistoryRef = useRef<string[]>(['/']);
+  const pathnameRef = useRef(pathname);
+  const notifiedMsgIdsRef = useRef<Set<string>>(new Set());
+  const currentUserRef = useRef<any>(null);
+
+  // Keep pathnameRef in sync for non-reactive access inside listeners
+  useEffect(() => { pathnameRef.current = pathname; }, [pathname]);
 
   const [isReady, setIsReady] = useState(false);
   const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
@@ -121,7 +134,7 @@ function InnerLayout() {
     }
   }, [isReady]);
 
-  // Setup Android Notification Channel with sound & vibration
+  // Setup Android Notification Channel with sound & vibration and register Push Token
   useEffect(() => {
     async function configureNotifications() {
       if (!Notifications) return; // Skip if not available (Expo Go)
@@ -135,15 +148,129 @@ function InnerLayout() {
             sound: 'default',
           });
         }
-        const { status } = await Notifications.getPermissionsAsync();
-        if (status !== 'granted') {
-          await Notifications.requestPermissionsAsync();
+        const { status: existingStatus } = await Notifications.getPermissionsAsync();
+        let finalStatus = existingStatus;
+        if (existingStatus !== 'granted') {
+          const { status: reqStatus } = await Notifications.requestPermissionsAsync();
+          finalStatus = reqStatus;
+        }
+
+        if (finalStatus === 'granted') {
+          try {
+            const projectId = Constants.expoConfig?.extra?.eas?.projectId || 'f4f9c5f5-fbb0-4058-a9a9-659e6c04bf1e';
+            const tokenRes = await Notifications.getExpoPushTokenAsync({ projectId });
+            const pushToken = tokenRes.data;
+
+            if (pushToken) {
+              const userDataStr = await AsyncStorage.getItem('userData');
+              if (userDataStr) {
+                const uData = JSON.parse(userDataStr);
+                const tokenPayload = { pushToken, updatedAt: new Date().toISOString() };
+                if (uData.uid) {
+                  await setDoc(doc(db, 'users', uData.uid), tokenPayload, { merge: true }).catch(() => {});
+                }
+                if (uData.empId) {
+                  await setDoc(doc(db, 'users', uData.empId), tokenPayload, { merge: true }).catch(() => {});
+                  await setDoc(doc(db, 'staff', uData.empId), tokenPayload, { merge: true }).catch(() => {});
+                }
+              }
+            }
+          } catch (tokErr) {
+            console.log("[PushToken] Failed to get Expo push token:", tokErr);
+          }
         }
       } catch (e) {
         console.warn('[Notifications] Setup failed:', e);
       }
     }
     configureNotifications();
+  }, []);
+
+  // ===== GLOBAL CHAT NOTIFICATION LISTENER =====
+  // Listens for new messages in Firestore and triggers local notifications
+  // on ALL screens EXCEPT the chat screen (chat.tsx has its own room-level logic)
+  useEffect(() => {
+    if (!Notifications) return;
+
+    // Load current user data for filtering own messages
+    AsyncStorage.getItem('userData').then(data => {
+      if (data) {
+        try { currentUserRef.current = JSON.parse(data); } catch {}
+      }
+    });
+
+    const q = query(
+      collection(db, 'communications'),
+      orderBy('createdAt', 'desc'),
+      limit(20)
+    );
+
+    let isInitialLoad = true;
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      // On first load, mark all existing messages as already-seen to avoid old notifications
+      if (isInitialLoad) {
+        snapshot.docs.forEach(d => notifiedMsgIdsRef.current.add(d.id));
+        isInitialLoad = false;
+        return;
+      }
+
+      if (!currentUserRef.current) return;
+      const empId = currentUserRef.current.empId;
+      const now = Date.now();
+
+      snapshot.docChanges().forEach((change) => {
+        if (change.type !== 'added') return;
+
+        const msgId = change.doc.id;
+        if (notifiedMsgIdsRef.current.has(msgId)) return;
+        notifiedMsgIdsRef.current.add(msgId);
+
+        // Skip if user is on the chat screen (chat.tsx handles its own notifications with room-level suppression)
+        if (pathnameRef.current === '/chat') return;
+
+        const data = change.doc.data();
+
+        // Skip own messages
+        if (data.authorId === empId) return;
+
+        // Check if message is recent (within 30 seconds)
+        let msgTime = now;
+        if (data.createdAt?.toMillis) {
+          msgTime = data.createdAt.toMillis();
+        } else if (data.createdAt?.seconds) {
+          msgTime = data.createdAt.seconds * 1000;
+        }
+        if (Math.abs(now - msgTime) > 30000) return;
+
+        // Check if current user is a participant
+        const isParticipant = data.roomId === 'group' ||
+          (data.participants && Array.isArray(data.participants) &&
+           (data.participants.includes(empId) || data.participants.includes('all')));
+        if (!isParticipant) return;
+
+        // Fire local notification
+        Notifications.scheduleNotificationAsync({
+          content: {
+            title: data.author ? `${data.author}` : 'New Message',
+            body: data.text || (data.attachments?.length ? 'Sent an attachment 📎' : 'New message received'),
+            sound: true,
+            data: { roomId: data.roomId, type: 'chat' },
+          },
+          trigger: null,
+        }).catch(() => {});
+      });
+
+      // Prevent memory leak - trim the set if it grows too large
+      if (notifiedMsgIdsRef.current.size > 200) {
+        const entries = Array.from(notifiedMsgIdsRef.current);
+        notifiedMsgIdsRef.current = new Set(entries.slice(-100));
+      }
+    }, (error) => {
+      console.log('[GlobalNotifListener] Snapshot error:', error);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   // Keyboard visibility listener to hide BottomNav when typing

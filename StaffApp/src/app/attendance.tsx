@@ -82,6 +82,10 @@ let attendanceBranchCache: { branchId: string; latitude: number; longitude: numb
 const checkAndAutoPunchOut = async (docId: string, data: any, shiftEndTime: string) => {
   if (!data.punchIn || data.punchOut) return;
 
+  // Field Staff stays punched-in 24/7 continuous - bypass auto punch out
+  const isField = (data.dept || data.staffType || '').includes('Field');
+  if (isField) return;
+
   const dateStr = data.date; // e.g. "2026-08-16"
   const [year, month, day] = dateStr.split('-').map(Number);
   const [hour, minute] = (shiftEndTime || '18:00').split(':').map(Number);
@@ -916,16 +920,19 @@ export default function AttendanceScreen() {
           const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
           if (bgStatus === 'granted') {
             await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-              accuracy: Location.Accuracy.Balanced,
-              timeInterval: 20000,
-              distanceInterval: 20,
-              deferredUpdatesInterval: 20000,
-              deferredUpdatesDistance: 20,
+              accuracy: Location.Accuracy.High,
+              timeInterval: 15000,
+              distanceInterval: 15,
+              deferredUpdatesInterval: 15000,
+              deferredUpdatesDistance: 15,
               showsBackgroundLocationIndicator: true,
+              pausesUpdatesAutomatically: false,
+              activityType: Location.ActivityType.Other,
               foregroundService: {
-                notificationTitle: "Live Tracking Active",
-                notificationBody: "Your location is being tracked for duty.",
-                notificationColor: "#138A43"
+                notificationTitle: "Ananya World",
+                notificationBody: "Ananya World",
+                notificationColor: "#003B95",
+                killServiceOnDestroy: false
               }
             });
           }
@@ -1104,12 +1111,12 @@ export default function AttendanceScreen() {
     }
     if (userRole === 'Field') {
       return {
-        bgClass: 'bg-[#EFF6FF] border-blue-100',
-        iconBgClass: 'bg-[#3B82F6]',
+        bgClass: 'bg-[#F0FDF4] border-green-100',
+        iconBgClass: 'bg-[#138A43]',
         icon: <Globe color="white" size={20} />,
-        title: 'Punch In to Start Duty',
-        subtitle: 'Your location will be acquired.',
-        disabled: false
+        title: 'Field Duty Active',
+        subtitle: 'Live location automatically shared for admin tracking.',
+        disabled: true
       };
     }
     if (userRole === 'Office' && isNearOffice) {
@@ -1161,7 +1168,7 @@ export default function AttendanceScreen() {
                     ? 'bg-amber-100'
                     : isHoliday && !isOffCanceled 
                       ? 'bg-orange-100'
-                      : punchInTime && !punchOutTime 
+                      : userRole === 'Field' || (punchInTime && !punchOutTime)
                         ? 'bg-[#E6F4EA]' 
                         : 'bg-[#FEE2E2]'
               }`}>
@@ -1172,7 +1179,7 @@ export default function AttendanceScreen() {
                       ? 'bg-[#D97706]'
                       : isHoliday && !isOffCanceled 
                         ? 'bg-orange-500'
-                        : punchInTime && !punchOutTime 
+                        : userRole === 'Field' || (punchInTime && !punchOutTime) 
                           ? 'bg-[#138A43]' 
                           : 'bg-[#EF4444]'
                 }`} />
@@ -1183,7 +1190,7 @@ export default function AttendanceScreen() {
                       ? 'text-[#D97706]'
                       : isHoliday && !isOffCanceled 
                         ? 'text-orange-600'
-                        : punchInTime && !punchOutTime 
+                        : userRole === 'Field' || (punchInTime && !punchOutTime) 
                           ? 'text-[#138A43]' 
                           : 'text-[#EF4444]'
                 }`}>
@@ -1193,9 +1200,11 @@ export default function AttendanceScreen() {
                       ? 'Holiday'
                       : isHoliday && !isOffCanceled 
                         ? 'Weekly Off'
-                        : punchInTime && !punchOutTime 
-                          ? 'On Duty' 
-                          : 'Not Punched In'}
+                        : userRole === 'Field' 
+                          ? 'Online' 
+                          : punchInTime && !punchOutTime 
+                            ? 'On Duty' 
+                            : 'Not Punched In'}
                 </Text>
               </View>
             </View>
@@ -1207,7 +1216,7 @@ export default function AttendanceScreen() {
                     ? 'text-amber-600'
                     : isHoliday && !isOffCanceled 
                       ? 'text-orange-600'
-                      : punchInTime && !punchOutTime 
+                      : userRole === 'Field' || (punchInTime && !punchOutTime) 
                         ? 'text-[#138A43]' 
                         : 'text-gray-500'
               }`}>
@@ -1217,11 +1226,13 @@ export default function AttendanceScreen() {
                     ? 'Public Holiday'
                     : isHoliday && !isOffCanceled 
                       ? 'Weekly Off'
-                      : punchInTime && !punchOutTime 
-                        ? 'Live Tracking' 
-                        : 'Not Tracking'}
+                      : userRole === 'Field' 
+                        ? 'Field Duty' 
+                        : punchInTime && !punchOutTime 
+                          ? 'Live Tracking' 
+                          : 'Not Tracking'}
               </Text>
-              <Signal color={isOnLeave ? "#8B5CF6" : isCompanyHoliday ? "#D97706" : (isHoliday && !isOffCanceled) ? "#F97316" : punchInTime && !punchOutTime ? "#138A43" : "#6B7280"} size={14} strokeWidth={3} />
+              <Signal color={isOnLeave ? "#8B5CF6" : isCompanyHoliday ? "#D97706" : (isHoliday && !isOffCanceled) ? "#F97316" : (userRole === 'Field' || (punchInTime && !punchOutTime)) ? "#138A43" : "#6B7280"} size={14} strokeWidth={3} />
             </View>
           </View>
 
@@ -1242,16 +1253,21 @@ export default function AttendanceScreen() {
 
           {/* Banner Card */}
           <View className={`rounded-2xl p-4 flex-row justify-between items-center mb-4 border ${bannerData.bgClass}`}>
-            <View className="flex-row items-center gap-3">
+            <View className="flex-row items-center gap-3 flex-1 pr-2">
               <View className={`w-10 h-10 rounded-full items-center justify-center ${bannerData.iconBgClass}`}>
                 {bannerData.icon}
               </View>
-              <View>
+              <View className="flex-1">
                 <Text className="text-black font-bold text-[15px]">{bannerData.title}</Text>
                 <Text className="text-gray-500 text-[11px] mt-0.5">{bannerData.subtitle}</Text>
               </View>
             </View>
-            {punchInTime && !punchOutTime ? (
+            {userRole === 'Field' ? (
+              <View className="bg-emerald-100 border border-emerald-200 rounded-xl px-3 py-1.5 items-center justify-center">
+                <Text className="text-emerald-800 text-[10px] font-black uppercase tracking-wider">Always Active</Text>
+                <Text className="text-emerald-600 text-[9px] font-bold mt-0.5">Auto Shared</Text>
+              </View>
+            ) : punchInTime && !punchOutTime ? (
               <View className="bg-amber-50 border border-amber-200 rounded-xl px-3.5 py-2 items-center justify-center min-w-[110px]">
                 <Text className="text-amber-800 text-[9px] font-black uppercase tracking-wider">Auto Out In</Text>
                 <Text className="text-amber-700 text-xs font-black mt-0.5">{countdownText}</Text>
@@ -1283,6 +1299,36 @@ export default function AttendanceScreen() {
               <Plane color="#8B5CF6" size={24} strokeWidth={2} className="mb-1" />
               <Text className="text-purple-700 text-sm font-bold">You are on Approved Leave today</Text>
               <Text className="text-purple-500 text-[10px] mt-0.5">Punch operations are disabled</Text>
+            </View>
+          ) : userRole === 'Field' ? (
+            <View className="flex-row justify-between items-center pt-2">
+              <View>
+                <Text className="text-black font-bold mb-2">Today's Punch</Text>
+                <View className="flex-row items-center gap-2">
+                  <LogIn color="#138A43" size={20} strokeWidth={2.5} />
+                  <View>
+                    <Text className="text-gray-500 text-[11px]">Punch In</Text>
+                    <Text className="text-black text-xs font-bold">{punchInTime ? formatTime(punchInTime) : 'Always Active'}</Text>
+                  </View>
+                </View>
+              </View>
+              
+              <View className="h-10 w-[1px] bg-gray-200 mt-6" />
+
+              <View className="mt-6 flex-row items-center gap-2">
+                <Globe color="#2563EB" size={20} strokeWidth={2.5} />
+                <View>
+                  <Text className="text-gray-500 text-[11px]">Duty Status</Text>
+                  <Text className="text-blue-600 text-xs font-bold">Always Active</Text>
+                </View>
+              </View>
+
+              <View className="h-10 w-[1px] bg-gray-200 mt-6" />
+
+              <View className="mt-6 items-end">
+                <Text className="text-gray-500 text-[11px] mb-0.5">GPS Location</Text>
+                <Text className="text-green-600 text-xs font-bold">Auto Shared</Text>
+              </View>
             </View>
           ) : (
             <View className="flex-row justify-between items-center pt-2">
