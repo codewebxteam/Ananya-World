@@ -122,10 +122,7 @@ function InnerLayout() {
         const cachedOut = await AsyncStorage.getItem(`punchOut_${today}`);
 
         if (isField || (cachedIn && !cachedOut)) {
-          const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
-          if (!hasStarted) {
-            await startDutyLocationTracking(prompt);
-          }
+          await startDutyLocationTracking(prompt, true);
         }
       } catch (err) {
         console.log('[Layout] Failed to auto-resume duty location tracking:', err);

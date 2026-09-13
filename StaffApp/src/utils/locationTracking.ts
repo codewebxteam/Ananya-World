@@ -25,6 +25,18 @@ if (!isExpoGo) {
         lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
         bypassDnd: true,
       }).catch(() => {});
+
+      Notifications.setNotificationChannelAsync('location-tracking', {
+        name: 'Live Location Tracking',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 0],
+        lightColor: '#003B95',
+        sound: null,
+        enableVibrate: false,
+        showBadge: false,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        bypassDnd: true,
+      }).catch(() => {});
     }
   } catch (e) {
     console.log('[LocationTracking] expo-notifications load skipped:', e);
@@ -262,15 +274,8 @@ export const requestDutyLocationPermissions = async (promptSettings: boolean = t
  * Displays the persistent, un-dismissible status bar notification on top
  * and continuously delivers background location updates 24/7.
  */
-export const startDutyLocationTracking = async (promptSettings: boolean = true): Promise<boolean> => {
+export const startDutyLocationTracking = async (promptSettings: boolean = true, forceRestart: boolean = true): Promise<boolean> => {
   try {
-    // Check if tracking is already running
-    const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
-    if (hasStarted) {
-      console.log('[LocationTracking] Location updates already running');
-      return true;
-    }
-
     // Ensure permissions are granted
     const permitted = await requestDutyLocationPermissions(promptSettings);
     if (!permitted) {
@@ -278,23 +283,41 @@ export const startDutyLocationTracking = async (promptSettings: boolean = true):
       return false;
     }
 
+    // Check if tracking is already running
+    const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+    if (hasStarted) {
+      if (!forceRestart) {
+        console.log('[LocationTracking] Location updates already running');
+        return true;
+      }
+      // On app update, fresh launch, or forceRestart, stop previous stale instance to ensure sticky notification is freshly attached by OS
+      try {
+        await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+        console.log('[LocationTracking] Stale location updates stopped for fresh restart');
+      } catch (stopErr) {
+        console.log('[LocationTracking] Stop error before restart (non-fatal):', stopErr);
+      }
+    }
+
     // Start location updates with foreground service (sticky notification)
     await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
       accuracy: Location.Accuracy.High,
-      timeInterval: 15000,
+      timeInterval: 30000, // Exactly 30 seconds interval as requested
       distanceInterval: 0,
+      deferredUpdatesInterval: 30000,
+      deferredUpdatesDistance: 0,
       showsBackgroundLocationIndicator: true,
       pausesUpdatesAutomatically: false,
       activityType: Location.ActivityType.Other,
       foregroundService: {
         notificationTitle: "Ananya World",
-        notificationBody: "Live Tracking Active",
+        notificationBody: "Live Tracking Active (24x7)",
         notificationColor: "#003B95",
         killServiceOnDestroy: false,
       },
     });
 
-    console.log('[LocationTracking] Foreground service location updates started successfully');
+    console.log('[LocationTracking] Foreground service location updates started successfully (30s interval)');
     return true;
   } catch (err) {
     console.error('[LocationTracking] Failed to start duty location tracking:', err);
