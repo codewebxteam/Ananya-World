@@ -282,15 +282,13 @@ export const startDutyLocationTracking = async (promptSettings: boolean = true):
     await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
       accuracy: Location.Accuracy.High,
       timeInterval: 15000,
-      distanceInterval: 10,
-      deferredUpdatesInterval: 15000,
-      deferredUpdatesDistance: 10,
+      distanceInterval: 0,
       showsBackgroundLocationIndicator: true,
       pausesUpdatesAutomatically: false,
       activityType: Location.ActivityType.Other,
       foregroundService: {
         notificationTitle: "Ananya World",
-        notificationBody: "Ananya World",
+        notificationBody: "Live Tracking Active",
         notificationColor: "#003B95",
         killServiceOnDestroy: false,
       },
