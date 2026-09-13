@@ -176,9 +176,9 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
   };
 
   const formatShiftTimings = (start: string | undefined, end: string | undefined) => {
-    if (!start && !end) return 'Not Provided';
+    if (!start && !end) return 'Flexible (No Fixed Shift)';
     
-    const formatTimeStr = (timeStr: string) => {
+    const formatTimeStr = (timeStr: string | undefined) => {
       if (!timeStr) return '';
       const parts = timeStr.split(':');
       if (parts.length < 2) return timeStr;
@@ -190,10 +190,13 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
       return `${hours}:${minutes} ${ampm}`;
     };
 
-    const startTime = start || '09:00';
-    const endTime = end || '17:00'; // Default 5:00 PM instead of 18:00 (6:00 PM)
-
-    return `${formatTimeStr(startTime)} - ${formatTimeStr(endTime)}`;
+    if (start && end) {
+      return `${formatTimeStr(start)} - ${formatTimeStr(end)}`;
+    }
+    if (start) {
+      return `From ${formatTimeStr(start)}`;
+    }
+    return `Until ${formatTimeStr(end)}`;
   };
 
   return (
@@ -440,7 +443,9 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
                   </div>
                   <div>
                     <p className="text-gray-400 font-semibold uppercase text-[10px]">Weekly Off</p>
-                    <p className="font-semibold text-gray-800 mt-0.5">{staff.weeklyOff || 'Not Provided'}</p>
+                    <p className="font-semibold text-gray-800 mt-0.5">
+                      {staff.weeklyOff ? staff.weeklyOff : ((staff.staffType || staff.department || '').includes('Field') ? 'No Weekly Off' : 'Not Provided')}
+                    </p>
                   </div>
                 </div>
 

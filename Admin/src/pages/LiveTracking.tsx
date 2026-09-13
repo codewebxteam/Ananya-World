@@ -266,12 +266,14 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
 
       snapshot.forEach(docSnap => {
         const data = docSnap.data();
-        const isPunchedIn = data.punchIn && !data.punchOut;
 
         // Lookup profile (check both empId and id)
         const profile = staffProfiles.find(p => p.empId === data.staffId || p.id === data.staffId);
         const staffType = profile?.staffType || data.dept || 'Field Staff';
         const isOffice = staffType === 'Office Staff' || staffType === 'Office' || staffType === 'Office staff';
+        const isField = !isOffice;
+        // Field Staff is 24/7 live active. Office staff is active between punch in and punch out.
+        const isActiveDuty = isField ? true : Boolean(data.punchIn && !data.punchOut);
 
         let formattedTime = 'N/A';
         if (data.punchIn) {
@@ -284,7 +286,7 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
         const bId = profile?.branchId || data.branchId || '';
         const displayName = isOffice ? `${data.name || 'Unknown'} (Office Staff)` : (data.name || 'Unknown');
 
-        if (isPunchedIn && (data.currentLatitude || data.latitudeIn) && (data.currentLongitude || data.longitudeIn)) {
+        if (isActiveDuty && (data.currentLatitude || data.latitudeIn) && (data.currentLongitude || data.longitudeIn)) {
           activeList.push({
             id: docSnap.id,
             staffId: data.staffId,
@@ -294,7 +296,7 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
             lat: Number(data.currentLatitude || data.latitudeIn),
             lng: Number(data.currentLongitude || data.longitudeIn),
             location: data.currentLocation || data.locationIn || 'Unknown Location',
-            time: formattedTime,
+            time: isField ? '24/7 Live' : formattedTime,
             punchInTime: data.punchIn,
             lastLocationUpdate: data.lastLocationUpdate || data.punchIn || null,
             status: isOffice ? 'Office Duty' : 'On Field',
@@ -309,11 +311,11 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
           staffId: data.staffId,
           name: displayName,
           avatar: data.avatar || null,
-          location: isPunchedIn ? (data.currentLocation || data.locationIn || 'Not Set') : (data.locationOut || 'Not Set'),
-          updated: isPunchedIn ? `Punched In at ${formattedTime}` : (data.punchOut ? `Punched Out at ${new Date(data.punchOut).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}` : 'N/A'),
+          location: isActiveDuty ? (data.currentLocation || data.locationIn || 'Not Set') : (data.locationOut || 'Not Set'),
+          updated: isActiveDuty ? (isField ? 'Live Tracking 24/7' : `Punched In at ${formattedTime}`) : (data.punchOut ? `Punched Out at ${new Date(data.punchOut).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}` : 'N/A'),
           battery: Math.floor(Math.random() * (98 - 72 + 1)) + 72,
           batColor: 'bg-green-500',
-          status: isPunchedIn ? (isOffice ? 'Office Duty' : 'On Field') : 'Offline',
+          status: isActiveDuty ? (isOffice ? 'Office Duty' : 'On Field') : 'Offline',
           branchId: bId,
           punchInTime: data.punchIn || null,
           profileData: profile || null

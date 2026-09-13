@@ -25,16 +25,17 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
     address: '',
     designation: '',
     joinDate: new Date().toISOString().split('T')[0],
-    shiftStartTime: '09:00',
-    shiftEndTime: '18:00',
+    shiftStartTime: '',
+    shiftEndTime: '',
     salaryAmount: '',
     nextSalaryDate: new Date().toISOString().split('T')[0],
-    weeklyOff: 'Sunday',
+    weeklyOff: '',
     status: 'Active',
   });
 
   useEffect(() => {
     if (staffToEdit && isOpen) {
+      const isField = (staffToEdit.staffType || '').includes('Field');
       setFormData({
         name: staffToEdit.name || '',
         email: staffToEdit.email || '',
@@ -45,18 +46,45 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
         address: staffToEdit.address || '',
         designation: staffToEdit.designation || '',
         joinDate: staffToEdit.joinDate || new Date().toISOString().split('T')[0],
-        shiftStartTime: staffToEdit.shiftStartTime || '09:00',
-        shiftEndTime: staffToEdit.shiftEndTime || '18:00',
+        shiftStartTime: (staffToEdit.shiftStartTime !== undefined && staffToEdit.shiftStartTime !== null)
+          ? staffToEdit.shiftStartTime
+          : (isField ? '' : '09:00'),
+        shiftEndTime: (staffToEdit.shiftEndTime !== undefined && staffToEdit.shiftEndTime !== null)
+          ? staffToEdit.shiftEndTime
+          : (isField ? '' : '18:00'),
         salaryAmount: staffToEdit.salaryAmount || '',
         nextSalaryDate: staffToEdit.nextSalaryDate || new Date().toISOString().split('T')[0],
-        weeklyOff: staffToEdit.weeklyOff || 'Sunday',
+        weeklyOff: staffToEdit.weeklyOff !== undefined ? staffToEdit.weeklyOff : (isField ? '' : 'Sunday'),
         status: staffToEdit.status || 'Active',
       });
     }
   }, [staffToEdit, isOpen]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+    if (name === 'staffType') {
+      if (value === 'Field Staff') {
+        setFormData(prev => ({
+          ...prev,
+          staffType: value,
+          branchId: '',
+          shiftStartTime: prev.shiftStartTime === '09:00' ? '' : prev.shiftStartTime,
+          shiftEndTime: prev.shiftEndTime === '18:00' ? '' : prev.shiftEndTime,
+          weeklyOff: prev.weeklyOff === 'Sunday' ? '' : prev.weeklyOff,
+        }));
+        return;
+      } else {
+        setFormData(prev => ({
+          ...prev,
+          staffType: value,
+          shiftStartTime: prev.shiftStartTime || '09:00',
+          shiftEndTime: prev.shiftEndTime || '18:00',
+          weeklyOff: prev.weeklyOff || 'Sunday',
+        }));
+        return;
+      }
+    }
+    setFormData({ ...formData, [name]: value });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -86,7 +114,7 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
         shiftEndTime: formData.shiftEndTime || '',
         salaryAmount: Number(formData.salaryAmount) || 0,
         nextSalaryDate: formData.nextSalaryDate,
-        weeklyOff: formData.weeklyOff,
+        weeklyOff: formData.staffType === 'Field Staff' ? (formData.weeklyOff || '') : (formData.weeklyOff || 'Sunday'),
         status: formData.status,
         updatedAt: serverTimestamp(),
       });
@@ -218,11 +246,59 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
                 </div>
               </div>
               
+              {formData.staffType === 'Field Staff' && (
+                <div className="col-span-2 flex flex-wrap items-center justify-between gap-2 bg-blue-50/70 border border-blue-100 rounded-xl px-4 py-2.5">
+                  <div className="text-xs">
+                    {!formData.shiftStartTime && !formData.shiftEndTime ? (
+                      <span className="flex items-center gap-1.5 text-emerald-700 font-bold">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                        Flexible Timing (No Fixed Shift Set)
+                      </span>
+                    ) : (
+                      <span className="text-gray-600 font-medium">
+                        Shift Timing: <strong className="text-blue-900 font-bold">{formData.shiftStartTime || 'None'} - {formData.shiftEndTime || 'None'}</strong>
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {(formData.shiftStartTime || formData.shiftEndTime) && (
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, shiftStartTime: '', shiftEndTime: '' }))}
+                        className="text-xs bg-white text-red-600 hover:bg-red-50 border border-red-200 px-2.5 py-1 rounded-lg font-bold transition-all shadow-sm"
+                      >
+                        ✕ Clear Timing (Flexible)
+                      </button>
+                    )}
+                    {(!formData.shiftStartTime || !formData.shiftEndTime) && (
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, shiftStartTime: '09:00', shiftEndTime: '18:00' }))}
+                        className="text-xs bg-white text-blue-600 hover:bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg font-bold transition-all shadow-sm"
+                      >
+                        Set 9 AM - 6 PM
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Shift Start Time */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Shift Start Time {formData.staffType === 'Field Staff' && <span className="text-gray-400 font-normal text-xs">(Optional)</span>}
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Shift Start Time {formData.staffType === 'Field Staff' && <span className="text-gray-400 font-normal text-xs">(Optional)</span>}
+                  </label>
+                  {formData.shiftStartTime && (
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, shiftStartTime: '' }))}
+                      className="text-[11px] text-red-500 hover:text-red-700 font-semibold"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
                 <div className="relative">
                   <Clock size={18} className="absolute left-3 top-3 text-gray-400 pointer-events-none" />
                   <input required={formData.staffType !== 'Field Staff'} type="time" name="shiftStartTime" value={formData.shiftStartTime} onChange={handleChange} className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
@@ -231,9 +307,20 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
 
               {/* Shift End Time */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Shift End Time {formData.staffType === 'Field Staff' && <span className="text-gray-400 font-normal text-xs">(Optional)</span>}
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Shift End Time {formData.staffType === 'Field Staff' && <span className="text-gray-400 font-normal text-xs">(Optional)</span>}
+                  </label>
+                  {formData.shiftEndTime && (
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, shiftEndTime: '' }))}
+                      className="text-[11px] text-red-500 hover:text-red-700 font-semibold"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
                 <div className="relative">
                   <Clock size={18} className="absolute left-3 top-3 text-gray-400 pointer-events-none" />
                   <input required={formData.staffType !== 'Field Staff'} type="time" name="shiftEndTime" value={formData.shiftEndTime} onChange={handleChange} className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
@@ -261,7 +348,9 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
                 
                 {/* Weekly Off */}
                 <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Weekly Off (Holiday)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Weekly Off (Holiday) {formData.staffType === 'Field Staff' && <span className="text-gray-400 font-normal text-xs">(Optional)</span>}
+                  </label>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
                       <Calendar size={18} />
@@ -272,6 +361,7 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
                       onChange={handleChange} 
                       className="w-full pl-10 pr-10 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 appearance-none transition-all"
                     >
+                      <option value="">{formData.staffType === 'Field Staff' ? 'No Weekly Off (Continuous Duty)' : 'Select Weekly Off'}</option>
                       <option value="Sunday">Sunday</option>
                       <option value="Monday">Monday</option>
                       <option value="Tuesday">Tuesday</option>

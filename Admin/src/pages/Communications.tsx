@@ -32,7 +32,7 @@ const sendExpoPushNotification = async (pushToken: string, title: string, body: 
         body: body || 'New Message',
         data: extraData,
         priority: 'high',
-        channelId: 'default',
+        channelId: 'chat-messages',
         _displayInForeground: true
       }),
     });
@@ -418,6 +418,7 @@ export default function Communications({ branchesList = [], profileData, setShow
     if (!selectedGroupId) return;
     setCustomGroupMessageText('');
     try {
+      const groupMembers = selectedGroup?.members || [];
       await addDoc(collection(db, 'communications'), {
         type: 'normal',
         text,
@@ -432,7 +433,23 @@ export default function Communications({ branchesList = [], profileData, setShow
         isPrivate: false,
         isCustomGroup: true,
         groupId: selectedGroupId,
+        participants: groupMembers,
       });
+
+      // Send push notifications to all group members
+      try {
+        const sentTokens = new Set<string>();
+        for (const mId of groupMembers) {
+          const s = staffList.find(st => st.empId === mId || st.id === mId || st.uid === mId);
+          if (s?.pushToken && !sentTokens.has(s.pushToken)) {
+            sentTokens.add(s.pushToken);
+            sendExpoPushNotification(s.pushToken, selectedGroup?.name || 'Group Message', `Admin: ${text || '[Attachment]'}`, { type: 'chat', roomId: `custom_group_${selectedGroupId}` });
+          }
+        }
+      } catch (pushErr) {
+        console.error('Error sending group push notification:', pushErr);
+      }
+
       setTimeout(() => customGroupMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     } catch (err) {
       console.error('Error sending custom group message:', err);
@@ -1279,7 +1296,19 @@ export default function Communications({ branchesList = [], profileData, setShow
       ) : activeTab === 'direct' ? (
         /* Personal Chat Panel */
         (() => {
-          const directRooms = privateRooms.filter(room => room.userB === 'admin' || room.roomId.startsWith('private_admin_'));
+          const directRooms = privateRooms
+            .filter(room => room.userB === 'admin' || room.roomId.startsWith('private_admin_'))
+            .sort((a, b) => {
+              const msgsA = messages.filter(m => m.roomId === a.roomId);
+              const msgsB = messages.filter(m => m.roomId === b.roomId);
+              const lastA = msgsA[msgsA.length - 1];
+              const lastB = msgsB[msgsB.length - 1];
+              let tA = lastA?.createdAt?.seconds ? lastA.createdAt.seconds * 1000 : (lastA?.createdAt ? new Date(lastA.createdAt).getTime() : 0);
+              let tB = lastB?.createdAt?.seconds ? lastB.createdAt.seconds * 1000 : (lastB?.createdAt ? new Date(lastB.createdAt).getTime() : 0);
+              if (!tA && a.lastMessageAt?.seconds) tA = a.lastMessageAt.seconds * 1000;
+              if (!tB && b.lastMessageAt?.seconds) tB = b.lastMessageAt.seconds * 1000;
+              return tB - tA;
+            });
           const availableStaffToChat = staffList.filter(staff => {
             const roomId = `private_admin_${staff.empId}`;
             return !directRooms.some(room => room.roomId === roomId);
@@ -1531,7 +1560,15 @@ export default function Communications({ branchesList = [], profileData, setShow
                   <p className="text-[10px] mt-1">Click "Create Group" to get started</p>
                 </div>
               ) : (
-                customGroups.map(group => {
+                [...customGroups].sort((a, b) => {
+                  const msgsA = messages.filter(m => m.roomId === `custom_group_${a.id}`);
+                  const msgsB = messages.filter(m => m.roomId === `custom_group_${b.id}`);
+                  const lastA = msgsA[msgsA.length - 1];
+                  const lastB = msgsB[msgsB.length - 1];
+                  let tA = lastA?.createdAt?.seconds ? lastA.createdAt.seconds * 1000 : (lastA?.createdAt ? new Date(lastA.createdAt).getTime() : 0);
+                  let tB = lastB?.createdAt?.seconds ? lastB.createdAt.seconds * 1000 : (lastB?.createdAt ? new Date(lastB.createdAt).getTime() : 0);
+                  return tB - tA;
+                }).map(group => {
                   const isSelected = selectedGroupId === group.id;
                   const lastMsg = messages.filter(m => m.roomId === `custom_group_${group.id}`).slice(-1)[0];
                   const unreadCount = getUnreadCountForRoom(`custom_group_${group.id}`, `room_custom_group_${group.id}`);

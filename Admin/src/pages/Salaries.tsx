@@ -64,7 +64,9 @@ function calculateRunningCycle(
 
   let deductionDays = 0;
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const staffWeeklyOff = staff.weeklyOff || 'Sunday';
+  const isFieldStaff = (staff.staffType || staff.department || '').includes('Field');
+  const hasWeeklyOff = Boolean(staff.weeklyOff && staff.weeklyOff !== 'None' && staff.weeklyOff !== 'No Weekly Off');
+  const staffWeeklyOff = hasWeeklyOff ? staff.weeklyOff : (isFieldStaff ? null : 'Sunday');
   const deductionDetails: any[] = [];
 
   const tempStart = new Date(actualStart);
@@ -79,7 +81,7 @@ function calculateRunningCycle(
     }
     
     const dayName = days[d.getDay()];
-    const isDefaultOff = dayName === staffWeeklyOff;
+    const isDefaultOff = staffWeeklyOff ? dayName.toLowerCase() === staffWeeklyOff.toLowerCase() : false;
     const isCompanyHoliday = holidaysSet.has(dateStr);
     const isApprovedLeave = userLeavesList.some(leave => dateStr >= leave.startDate && dateStr <= leave.endDate);
     const isOffCancelled = offCancelsSet.has(dateStr);
@@ -297,13 +299,15 @@ export default function Salaries() {
 
             let deductionDays = 0;
             const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-            const staffWeeklyOff = staff.weeklyOff || 'Sunday';
+            const isFieldStaff = (staff.staffType || staff.department || '').includes('Field');
+            const hasWeeklyOff = Boolean(staff.weeklyOff && staff.weeklyOff !== 'None' && staff.weeklyOff !== 'No Weekly Off');
+            const staffWeeklyOff = hasWeeklyOff ? staff.weeklyOff : (isFieldStaff ? null : 'Sunday');
             const deductionDetails: any[] = [];
 
             for (let d = new Date(cycleStart); d <= cycleEnd; d.setDate(d.getDate() + 1)) {
               const dateStr = d.toISOString().split('T')[0];
               const dayName = days[d.getDay()];
-              const isDefaultOff = dayName === staffWeeklyOff;
+              const isDefaultOff = staffWeeklyOff ? dayName.toLowerCase() === staffWeeklyOff.toLowerCase() : false;
               
               const isCompanyHoliday = holidaysSet.has(dateStr);
               const isApprovedLeave = leavesList.some(leave => dateStr >= leave.startDate && dateStr <= leave.endDate);
