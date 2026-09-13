@@ -93,8 +93,16 @@ try {
             // Field staff is 24/7 continuous duty: ensure punchIn is active and punchOut is null
             if (isField) {
               attPayload.status = 'Present';
-              attPayload.punchIn = nowIso;
               attPayload.punchOut = null;
+              
+              // Only set punchIn once when duty begins today; preserve it across 30s pings so Duration accumulates!
+              const cachedPunchInKey = `punchIn_${todayStr}`;
+              let existingPunchIn = await AsyncStorage.getItem(cachedPunchInKey);
+              if (!existingPunchIn) {
+                existingPunchIn = nowIso;
+                await AsyncStorage.setItem(cachedPunchInKey, existingPunchIn);
+              }
+              attPayload.punchIn = existingPunchIn;
             }
 
             await setDoc(attRef, attPayload, { merge: true });

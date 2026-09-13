@@ -254,10 +254,14 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
   useEffect(() => {
     if (staffProfiles.length === 0) return;
 
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayUtc = new Date().toISOString().split('T')[0];
+    const todayLocal = new Date().toLocaleDateString('en-CA');
+    const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+    const datesToCheck = Array.from(new Set([todayUtc, todayLocal, yesterday]));
+
     const qAtt = query(
       collection(db, 'attendance'),
-      where('date', '==', todayStr)
+      where('date', 'in', datesToCheck)
     );
 
     const unsubscribe = onSnapshot(qAtt, (snapshot) => {
@@ -297,7 +301,7 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
         const displayName = isOffice ? `${data.name || 'Unknown'} (Office Staff)` : (data.name || 'Unknown');
 
         if (isActiveDuty && (data.currentLatitude || data.latitudeIn) && (data.currentLongitude || data.longitudeIn)) {
-          activeList.push({
+          const activeItem = {
             id: docSnap.id,
             staffId: data.staffId,
             name: displayName,
@@ -307,16 +311,25 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
             lng: Number(data.currentLongitude || data.longitudeIn),
             location: data.currentLocation || data.locationIn || 'Unknown Location',
             time: isField ? '24/7 Live' : formattedTime,
-            punchInTime: data.punchIn,
+            punchInTime: data.punchIn || profile?.createdAt || null,
             lastLocationUpdate: data.lastLocationUpdate || data.punchIn || null,
             status: isOffice ? 'Office Duty' : 'On Field',
             dot: isOffice ? 'bg-blue-500' : 'bg-orange-500',
             branchId: bId,
             profileData: profile || null
-          });
+          };
+
+          const existingIdx = activeList.findIndex(item => item.staffId === data.staffId);
+          if (existingIdx >= 0) {
+            const prevTime = new Date(activeList[existingIdx].lastLocationUpdate || 0).getTime();
+            const currTime = new Date(activeItem.lastLocationUpdate || 0).getTime();
+            if (currTime >= prevTime) activeList[existingIdx] = activeItem;
+          } else {
+            activeList.push(activeItem);
+          }
         }
 
-        recentList.push({
+        const recentItem = {
           id: docSnap.id.substring(0, 8),
           staffId: data.staffId,
           name: displayName,
@@ -328,8 +341,18 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
           status: isActiveDuty ? (isOffice ? 'Office Duty' : 'On Field') : 'Offline',
           branchId: bId,
           punchInTime: data.punchIn || null,
-          profileData: profile || null
-        });
+          profileData: profile || null,
+          lastLocationUpdate: data.lastLocationUpdate || data.punchIn || null
+        };
+
+        const existingRecentIdx = recentList.findIndex(item => item.staffId === data.staffId);
+        if (existingRecentIdx >= 0) {
+          const prevTime = new Date(recentList[existingRecentIdx].lastLocationUpdate || 0).getTime();
+          const currTime = new Date(recentItem.lastLocationUpdate || 0).getTime();
+          if (currTime >= prevTime) recentList[existingRecentIdx] = recentItem;
+        } else {
+          recentList.push(recentItem);
+        }
       });
 
       setStaffOnMap(activeList);

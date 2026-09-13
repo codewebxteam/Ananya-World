@@ -164,6 +164,12 @@ function App() {
             s => s.empId === attData.staffId || s.id === attData.staffId
           );
           if (staff) {
+            // Field Staff is 24/7 continuous live duty - NEVER auto punch out!
+            const staffType = staff.staffType || staff.department || '';
+            if (staffType.toLowerCase().includes('field')) {
+              return;
+            }
+
             const shiftEndTime = staff.shiftEndTime || '18:00';
             const dateStr = attData.date;
             const [year, month, day] = dateStr.split('-').map(Number);
