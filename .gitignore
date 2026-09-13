@@ -11,6 +11,7 @@ build/
 
 # Sensitive Firebase & Keys
 google-services.json
+!StaffApp/google-services.json
 GoogleService-Info.plist
 firebase.rules
 firestore.rules

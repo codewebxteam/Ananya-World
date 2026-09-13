@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "669540818585",
+    "firebase_url": "https://ananya-world-1979-default-rtdb.firebaseio.com",
+    "project_id": "ananya-world-1979",
+    "storage_bucket": "ananya-world-1979.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:669540818585:android:d0c46f61d0e0bee8226208",
+        "android_client_info": {
+          "package_name": "com.codewebx.ananyaworld"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyALg28deNqI4TKBJCPZCR2j-bKLjg4RzOY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
