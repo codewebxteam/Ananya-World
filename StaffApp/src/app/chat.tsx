@@ -30,38 +30,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc, doc, increment, deleteDoc, setDoc, getDoc, getDocs, where } from 'firebase/firestore';
 import { db, auth } from '../config/firebase';
 import { uploadToImageKitWithDetails, uploadBase64ToImageKit, deleteFromImageKit } from '../utils/imagekit';
-
-const sendExpoPushNotification = async (pushToken: string, title: string, body: string, extraData: any = {}) => {
-  if (!pushToken || typeof pushToken !== 'string') return;
-  const cleanToken = pushToken.trim();
-  if (!cleanToken.startsWith('ExponentPushToken') && !cleanToken.startsWith('ExpoPushToken')) {
-    console.warn('[PushNotification] Invalid push token format:', cleanToken);
-    return;
-  }
-  try {
-    const res = await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        'Accept-encoding': 'gzip, deflate',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        to: cleanToken,
-        sound: 'default',
-        title: title || 'Ananya World',
-        body: body || 'New Message',
-        data: extraData,
-        priority: 'high',
-        channelId: 'default'
-      }),
-    });
-    const resData = await res.json();
-    console.log('[PushNotification Result]:', resData);
-  } catch (e) {
-    console.error('Push notification error:', e);
-  }
-};
+import { sendExpoPushNotification, registerForPushNotificationsAsync } from '../utils/pushNotifications';
 
 const findPushToken = async (empId: string, staffArr: any[]): Promise<string | null> => {
   // 1. Check local staff list first (fastest)
@@ -280,6 +249,7 @@ export default function ChatScreen() {
               const parsed = JSON.parse(data);
               setUserData(parsed);
               globalChatCache.userData = parsed;
+              registerForPushNotificationsAsync(parsed).catch(() => {});
             }
         });
 
@@ -327,10 +297,12 @@ export default function ChatScreen() {
                     if (isRecent && isOtherUser && isParticipant && isRoomNotOpen) {
                         Notifications?.scheduleNotificationAsync({
                             content: {
-                                title: data.author ? `Message from ${data.author}` : "New Message",
+                                title: data.author ? `${data.author}` : "New Message",
                                 body: data.text || (data.attachments?.length ? "Sent an attachment 📎" : "New message received"),
-                                sound: true,
-                                data: { roomId: data.roomId },
+                                sound: 'default',
+                                priority: 'high',
+                                channelId: 'default',
+                                data: { roomId: data.roomId, type: 'chat' },
                             },
                             trigger: null,
                         }).catch(() => {});

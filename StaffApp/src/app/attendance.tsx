@@ -13,7 +13,7 @@ import {
   doc, getDoc, setDoc, updateDoc, collection, 
   query, where, onSnapshot 
 } from 'firebase/firestore';
-import { LOCATION_TASK_NAME } from './_layout';
+import { LOCATION_TASK_NAME, startDutyLocationTracking, stopDutyLocationTracking } from '../utils/locationTracking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
@@ -916,29 +916,9 @@ export default function AttendanceScreen() {
           branchId: activeSwap ? activeSwap.originalBranchId : (userData?.branchId || '')
         });
 
-        try {
-          const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
-          if (bgStatus === 'granted') {
-            await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-              accuracy: Location.Accuracy.High,
-              timeInterval: 15000,
-              distanceInterval: 15,
-              deferredUpdatesInterval: 15000,
-              deferredUpdatesDistance: 15,
-              showsBackgroundLocationIndicator: true,
-              pausesUpdatesAutomatically: false,
-              activityType: Location.ActivityType.Other,
-              foregroundService: {
-                notificationTitle: "Ananya World",
-                notificationBody: "Ananya World",
-                notificationColor: "#003B95",
-                killServiceOnDestroy: false
-              }
-            });
-          }
-        } catch (bgErr) {
+        await startDutyLocationTracking().catch(bgErr => {
           console.log("Failed to start background tracking", bgErr);
-        }
+        });
 
         Alert.alert("Success", `Punch In successful at ${fetchedAddress}!`);
       } catch (error: any) {
@@ -962,14 +942,9 @@ export default function AttendanceScreen() {
           hours: hoursStr
         });
 
-        try {
-          const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
-          if (hasStarted) {
-            await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
-          }
-        } catch (stopErr) {
+        await stopDutyLocationTracking().catch(stopErr => {
           console.log("Failed to stop background tracking", stopErr);
-        }
+        });
 
         Alert.alert("Success", "Punch Out successful!");
       } catch (error: any) {

@@ -68,22 +68,22 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
       if (!staffToEdit?.id) throw new Error("Staff ID is missing");
       
       const selectedBranch = branchesList.find(b => b.id === formData.branchId);
-      const branchName = selectedBranch ? selectedBranch.name : '';
+      const branchName = selectedBranch ? selectedBranch.name : (formData.staffType === 'Field Staff' ? 'Field Operations' : '');
 
       // Update details in Firestore
       await updateDoc(doc(db, 'users', staffToEdit.id), {
         name: formData.name,
         empId: formData.empId,
         staffType: formData.staffType,
-        branchId: formData.branchId,
+        branchId: formData.branchId || '',
         branchName: branchName || '',
         department: formData.staffType === 'Field Staff' ? 'Field Operations' : 'Office',
         phone: formData.phone,
         address: formData.address,
         designation: formData.designation,
         joinDate: formData.joinDate,
-        shiftStartTime: formData.shiftStartTime,
-        shiftEndTime: formData.shiftEndTime,
+        shiftStartTime: formData.shiftStartTime || '',
+        shiftEndTime: formData.shiftEndTime || '',
         salaryAmount: Number(formData.salaryAmount) || 0,
         nextSalaryDate: formData.nextSalaryDate,
         weeklyOff: formData.weeklyOff,
@@ -177,11 +177,13 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
 
               {/* Branch */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Branch</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Branch {formData.staffType === 'Field Staff' && <span className="text-gray-400 font-normal text-xs">(Optional)</span>}
+                </label>
                 <div className="relative">
                   <Building2 size={18} className="absolute left-3 top-3 text-gray-400" />
-                  <select required name="branchId" value={formData.branchId} onChange={handleChange} className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all cursor-pointer">
-                    <option value="" disabled>Select Branch</option>
+                  <select required={formData.staffType !== 'Field Staff'} name="branchId" value={formData.branchId} onChange={handleChange} className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all cursor-pointer">
+                    <option value="">{formData.staffType === 'Field Staff' ? 'No Specific Branch (Field)' : 'Select Branch'}</option>
                     {branchesList.map(branch => (
                       <option key={branch.id} value={branch.id}>{branch.name}</option>
                     ))}
@@ -218,19 +220,23 @@ export default function EditStaffModal({ isOpen, onClose, branchesList, staffToE
               
               {/* Shift Start Time */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Shift Start Time</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Shift Start Time {formData.staffType === 'Field Staff' && <span className="text-gray-400 font-normal text-xs">(Optional)</span>}
+                </label>
                 <div className="relative">
                   <Clock size={18} className="absolute left-3 top-3 text-gray-400 pointer-events-none" />
-                  <input required type="time" name="shiftStartTime" value={formData.shiftStartTime} onChange={handleChange} className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
+                  <input required={formData.staffType !== 'Field Staff'} type="time" name="shiftStartTime" value={formData.shiftStartTime} onChange={handleChange} className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
                 </div>
               </div>
 
               {/* Shift End Time */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Shift End Time</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Shift End Time {formData.staffType === 'Field Staff' && <span className="text-gray-400 font-normal text-xs">(Optional)</span>}
+                </label>
                 <div className="relative">
                   <Clock size={18} className="absolute left-3 top-3 text-gray-400 pointer-events-none" />
-                  <input required type="time" name="shiftEndTime" value={formData.shiftEndTime} onChange={handleChange} className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
+                  <input required={formData.staffType !== 'Field Staff'} type="time" name="shiftEndTime" value={formData.shiftEndTime} onChange={handleChange} className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
                 </div>
               </div>
 

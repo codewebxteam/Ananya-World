@@ -44,10 +44,11 @@ export default function AddStaffModal({ isOpen, onClose, branchesList }: AddStaf
       );
     }
     if (step === 2) {
+      const isFieldStaff = formData.staffType === 'Field Staff';
       return (
         formData.empId.trim() !== '' &&
         formData.designation.trim() !== '' &&
-        formData.branchId !== '' &&
+        (isFieldStaff || formData.branchId !== '') &&
         formData.joinDate !== ''
       );
     }
@@ -83,6 +84,9 @@ export default function AddStaffModal({ isOpen, onClose, branchesList }: AddStaf
       
       const user = userCredential.user;
 
+      const selectedBranch = branchesList.find(b => b.id === formData.branchId);
+      const branchName = selectedBranch ? selectedBranch.name : (formData.staffType === 'Field Staff' ? 'Field Operations' : '');
+
       // 2. Add details to Firestore
       await setDoc(doc(db, 'users', user.uid), {
         uid: user.uid,
@@ -91,14 +95,15 @@ export default function AddStaffModal({ isOpen, onClose, branchesList }: AddStaf
         empId: formData.empId,
         role: 'staff',
         staffType: formData.staffType,
-        branchId: formData.branchId,
+        branchId: formData.branchId || '',
+        branchName: branchName || '',
         department: formData.staffType === 'Field Staff' ? 'Field Operations' : 'Office',
         phone: formData.phone,
         address: formData.address,
         designation: formData.designation,
         joinDate: formData.joinDate,
-        shiftStartTime: formData.shiftStartTime,
-        shiftEndTime: formData.shiftEndTime,
+        shiftStartTime: formData.shiftStartTime || '',
+        shiftEndTime: formData.shiftEndTime || '',
         salaryAmount: formData.salaryAmount,
         nextSalaryDate: formData.nextSalaryDate,
         weeklyOff: formData.weeklyOff,
@@ -284,11 +289,13 @@ export default function AddStaffModal({ isOpen, onClose, branchesList }: AddStaf
 
                   {/* Branch */}
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Branch Assignment</label>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                      Branch Assignment {formData.staffType === 'Field Staff' && <span className="text-gray-400 font-normal lowercase">(optional)</span>}
+                    </label>
                     <div className="relative">
                       <Building2 size={18} className="absolute left-3.5 top-3.5 text-gray-400" />
-                      <select required name="branchId" value={formData.branchId} onChange={handleChange} className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all cursor-pointer text-gray-800 font-medium">
-                        <option value="" disabled>Select Branch</option>
+                      <select required={formData.staffType !== 'Field Staff'} name="branchId" value={formData.branchId} onChange={handleChange} className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all cursor-pointer text-gray-800 font-medium">
+                        <option value="">{formData.staffType === 'Field Staff' ? 'No Specific Branch (Field)' : 'Select Branch'}</option>
                         {branchesList.map(branch => (
                           <option key={branch.id} value={branch.id}>{branch.name}</option>
                         ))}
@@ -314,19 +321,23 @@ export default function AddStaffModal({ isOpen, onClose, branchesList }: AddStaf
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   {/* Shift Start Time */}
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Shift Start Time</label>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                      Shift Start Time {formData.staffType === 'Field Staff' && <span className="text-gray-400 font-normal lowercase">(optional)</span>}
+                    </label>
                     <div className="relative">
                       <Clock size={18} className="absolute left-3.5 top-3.5 text-gray-400 pointer-events-none" />
-                      <input required type="time" name="shiftStartTime" value={formData.shiftStartTime} onChange={handleChange} className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-gray-800 font-medium" />
+                      <input required={formData.staffType !== 'Field Staff'} type="time" name="shiftStartTime" value={formData.shiftStartTime} onChange={handleChange} className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-gray-800 font-medium" />
                     </div>
                   </div>
 
                   {/* Shift End Time */}
                   <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Shift End Time</label>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                      Shift End Time {formData.staffType === 'Field Staff' && <span className="text-gray-400 font-normal lowercase">(optional)</span>}
+                    </label>
                     <div className="relative">
                       <Clock size={18} className="absolute left-3.5 top-3.5 text-gray-400 pointer-events-none" />
-                      <input required type="time" name="shiftEndTime" value={formData.shiftEndTime} onChange={handleChange} className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-gray-800 font-medium" />
+                      <input required={formData.staffType !== 'Field Staff'} type="time" name="shiftEndTime" value={formData.shiftEndTime} onChange={handleChange} className="w-full pl-11 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all text-gray-800 font-medium" />
                     </div>
                   </div>
 

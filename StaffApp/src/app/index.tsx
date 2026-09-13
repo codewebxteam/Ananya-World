@@ -3,7 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { 
   View, Text, ScrollView, TouchableOpacity, Alert, 
   Modal, TextInput, ActivityIndicator, Linking,
-  KeyboardAvoidingView, Platform, Keyboard, TouchableWithoutFeedback 
+  KeyboardAvoidingView, Platform, Keyboard, TouchableWithoutFeedback,
+  AppState
 } from 'react-native';
 import { 
   MapPin, LogIn, LogOut, 
@@ -19,7 +20,8 @@ import {
   doc, getDoc, setDoc, updateDoc, collection, 
   query, where, onSnapshot, addDoc 
 } from 'firebase/firestore';
-import { LOCATION_TASK_NAME } from './_layout';
+import { LOCATION_TASK_NAME, startDutyLocationTracking, stopDutyLocationTracking, requestDutyLocationPermissions } from '../utils/locationTracking';
+import { registerForPushNotificationsAsync } from '../utils/pushNotifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import Constants from 'expo-constants';
@@ -239,31 +241,8 @@ export default function HomeScreen() {
       }
 
       try {
-        const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
-        if (bgStatus === 'granted') {
-          setHasLocationPermissions(true);
-          const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
-          if (!hasStarted) {
-            await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-              accuracy: Location.Accuracy.High,
-              timeInterval: 15000,
-              distanceInterval: 15,
-              deferredUpdatesInterval: 15000,
-              deferredUpdatesDistance: 15,
-              showsBackgroundLocationIndicator: true,
-              pausesUpdatesAutomatically: false,
-              activityType: Location.ActivityType.Other,
-              foregroundService: {
-                notificationTitle: "Ananya World",
-                notificationBody: "Ananya World",
-                notificationColor: "#003B95",
-                killServiceOnDestroy: false
-              }
-            });
-          }
-        } else {
-          setHasLocationPermissions(false);
-        }
+        const started = await startDutyLocationTracking(true);
+        setHasLocationPermissions(started);
       } catch (bgErr) {
         console.log("Background tracking start error:", bgErr);
         setHasLocationPermissions(false);
@@ -272,6 +251,36 @@ export default function HomeScreen() {
       console.error("Auto punch in error for Field Staff:", err);
     }
   };
+
+  // Re-check permissions and resume tracking when returning from Settings or background
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', async (nextState) => {
+      if (nextState === 'active') {
+        try {
+          const bgPerm = await Location.getBackgroundPermissionsAsync();
+          const isGranted = bgPerm.status === 'granted';
+          setHasLocationPermissions(isGranted);
+          if (isGranted) {
+            const storedUser = await AsyncStorage.getItem('userData');
+            if (storedUser) {
+              const u = JSON.parse(storedUser);
+              const isField = (u.staffType || u.department || '').includes('Field');
+              const today = new Date().toISOString().split('T')[0];
+              const cachedIn = await AsyncStorage.getItem(`punchIn_${today}`);
+              const cachedOut = await AsyncStorage.getItem(`punchOut_${today}`);
+              if (isField || (cachedIn && !cachedOut)) {
+                await startDutyLocationTracking(false);
+              }
+            }
+          }
+        } catch {}
+      }
+    });
+
+    return () => {
+      sub.remove();
+    };
+  }, []);
 
   useEffect(() => {
     let unsubAtt: any;
@@ -294,26 +303,17 @@ export default function HomeScreen() {
           globalHomeCache.userData = parsed;
           const isField = (parsed.staffType || parsed.department || 'Office').includes('Field');
           setUserRole(isField ? 'Field' : 'Office');
+          
+          Location.getBackgroundPermissionsAsync().then(bg => {
+            setHasLocationPermissions(bg.status === 'granted');
+          }).catch(() => {});
+
           if (isField) {
             ensureFieldStaffAutoPunchIn(parsed);
           }
 
-          if (Notifications && parsed) {
-            Notifications.getPermissionsAsync().then(async (perm: any) => {
-              if (perm?.status === 'granted') {
-                const projectId = Constants.expoConfig?.extra?.eas?.projectId || 'f4f9c5f5-fbb0-4058-a9a9-659e6c04bf1e';
-                const tokenRes = await Notifications.getExpoPushTokenAsync({ projectId }).catch(() => null);
-                const pToken = tokenRes?.data;
-                if (pToken) {
-                  const payload = { pushToken: pToken, updatedAt: new Date().toISOString() };
-                  if (parsed.uid) setDoc(doc(db, 'users', parsed.uid), payload, { merge: true }).catch(() => {});
-                  if (parsed.empId) {
-                    setDoc(doc(db, 'users', parsed.empId), payload, { merge: true }).catch(() => {});
-                    setDoc(doc(db, 'staff', parsed.empId), payload, { merge: true }).catch(() => {});
-                  }
-                }
-              }
-            }).catch(() => {});
+          if (parsed) {
+            registerForPushNotificationsAsync(parsed).catch(() => {});
           }
 
           // Check if within 24 hours of first install/open
@@ -425,32 +425,9 @@ export default function HomeScreen() {
 
                 // Resume background tracking if currently punched in (for Office Staff as well)
                 if (attData.punchIn) {
-                  try {
-                    const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
-                    if (bgStatus === 'granted') {
-                      const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
-                      if (!hasStarted) {
-                        await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-                          accuracy: Location.Accuracy.High,
-                          timeInterval: 15000,
-                          distanceInterval: 15,
-                          deferredUpdatesInterval: 15000,
-                          deferredUpdatesDistance: 15,
-                          showsBackgroundLocationIndicator: true,
-                          pausesUpdatesAutomatically: false,
-                          activityType: Location.ActivityType.Other,
-                          foregroundService: {
-                            notificationTitle: "Ananya World",
-                            notificationBody: "Ananya World",
-                            notificationColor: "#003B95",
-                            killServiceOnDestroy: false
-                          }
-                        });
-                      }
-                    }
-                  } catch (bgErr) {
+                  startDutyLocationTracking().catch(bgErr => {
                     console.log("Failed to resume background tracking in initData", bgErr);
-                  }
+                  });
                 }
               }
             } else {
@@ -1111,29 +1088,9 @@ export default function HomeScreen() {
           branchId: activeSwap ? activeSwap.originalBranchId : (userData?.branchId || '')
         });
         
-          try {
-            const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
-            if (bgStatus === 'granted') {
-              await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-                accuracy: Location.Accuracy.High,
-                timeInterval: 15000,
-                distanceInterval: 15,
-                deferredUpdatesInterval: 15000,
-                deferredUpdatesDistance: 15,
-                showsBackgroundLocationIndicator: true,
-                pausesUpdatesAutomatically: false,
-                activityType: Location.ActivityType.Other,
-                foregroundService: {
-                  notificationTitle: "Ananya World",
-                  notificationBody: "Ananya World",
-                  notificationColor: "#003B95",
-                  killServiceOnDestroy: false
-                }
-              });
-            }
-          } catch (bgErr) {
-            console.log("Failed to start background tracking", bgErr);
-          }
+        await startDutyLocationTracking().catch(bgErr => {
+          console.log("Failed to start background tracking", bgErr);
+        });
 
         Alert.alert("Success", `Punch In successful at ${locationAddress}!`);
       } catch (error: any) {
@@ -1178,14 +1135,9 @@ export default function HomeScreen() {
           hours: hoursStr
         });
 
-          try {
-            const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
-            if (hasStarted) {
-              await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
-            }
-          } catch (stopErr) {
-            console.log("Failed to stop background tracking", stopErr);
-          }
+        await stopDutyLocationTracking().catch(stopErr => {
+          console.log("Failed to stop background tracking", stopErr);
+        });
 
         Alert.alert("Success", "Punch Out successful!");
       } catch (error: any) {
@@ -1447,7 +1399,13 @@ export default function HomeScreen() {
           {/* Permission warning banner if missing */}
           {!hasLocationPermissions && userRole === 'Field' && (
             <TouchableOpacity 
-              onPress={() => ensureFieldStaffAutoPunchIn(userData)}
+              onPress={async () => {
+                const ok = await requestDutyLocationPermissions(true);
+                if (ok) {
+                  const started = await startDutyLocationTracking(false);
+                  setHasLocationPermissions(started);
+                }
+              }}
               className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 flex-row items-center gap-3 mb-4"
             >
               <View className="w-9 h-9 rounded-full bg-amber-100 items-center justify-center">
@@ -1455,7 +1413,10 @@ export default function HomeScreen() {
               </View>
               <View className="flex-1">
                 <Text className="text-amber-900 font-bold text-xs">Background Location Access Needed</Text>
-                <Text className="text-amber-700 text-[10px] mt-0.5">Tap here to allow background location permissions for field duty.</Text>
+                <Text className="text-amber-700 text-[10px] mt-0.5">Tap here to allow 'Allow all the time' in Settings for field duty.</Text>
+              </View>
+              <View className="bg-amber-600 px-3 py-1.5 rounded-xl">
+                <Text className="text-white text-[10px] font-bold">Fix</Text>
               </View>
             </TouchableOpacity>
           )}

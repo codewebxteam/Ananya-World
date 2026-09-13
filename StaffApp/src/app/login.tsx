@@ -12,6 +12,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth, db } from '../config/firebase';
 import { signInWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
+import { registerForPushNotificationsAsync } from '../utils/pushNotifications';
 
 export default function LoginScreen() {
   const [username, setUsername] = useState('');
@@ -45,6 +46,9 @@ export default function LoginScreen() {
       await AsyncStorage.setItem('isLoggedIn', 'true');
       await AsyncStorage.setItem('uid', user.uid);
       await AsyncStorage.setItem('userData', JSON.stringify(userData));
+      
+      // Immediately register and sync push token
+      registerForPushNotificationsAsync(userData).catch(() => {});
       
       if (userData.status === 'Pending') {
         router.replace('/pending');

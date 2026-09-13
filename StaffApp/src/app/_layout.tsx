@@ -15,7 +15,7 @@ configureReanimatedLogger({
 import Header from '../components/Header';
 import BottomNav, { TabName } from '../components/BottomNav';
 
-import { BackHandler, Alert, ToastAndroid, Platform, Keyboard } from 'react-native';
+import { BackHandler, Alert, ToastAndroid, Platform, Keyboard, AppState } from 'react-native';
 import { useEffect, useRef, useState } from 'react';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -48,7 +48,9 @@ if (!isExpoGo) {
   }
 }
 
-export const LOCATION_TASK_NAME = 'background-location-task';
+import { LOCATION_TASK_NAME, startDutyLocationTracking, stopDutyLocationTracking } from '../utils/locationTracking';
+import { registerForPushNotificationsAsync } from '../utils/pushNotifications';
+export { LOCATION_TASK_NAME, startDutyLocationTracking, stopDutyLocationTracking };
 
 TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   if (error) {
@@ -134,65 +136,56 @@ function InnerLayout() {
     }
   }, [isReady]);
 
-  // Setup Android Notification Channel with sound & vibration and register Push Token
+  // Setup Android Notification Channel & register Push Token
   useEffect(() => {
-    async function configureNotifications() {
-      if (!Notifications) return; // Skip if not available (Expo Go)
+    registerForPushNotificationsAsync();
+  }, []);
+
+  // Automatically start/resume foreground service location tracking for active duty (Field Staff or Punched In)
+  useEffect(() => {
+    async function resumeTrackingIfActive(prompt: boolean = true) {
       try {
-        if (Platform.OS === 'android') {
-          await Notifications.setNotificationChannelAsync('default', {
-            name: 'Default Notifications',
-            importance: Notifications.AndroidImportance.HIGH,
-            vibrationPattern: [0, 250, 250, 250],
-            lightColor: '#003B95',
-            sound: 'default',
-          });
-        }
-        const { status: existingStatus } = await Notifications.getPermissionsAsync();
-        let finalStatus = existingStatus;
-        if (existingStatus !== 'granted') {
-          const { status: reqStatus } = await Notifications.requestPermissionsAsync();
-          finalStatus = reqStatus;
-        }
+        const storedUser = await AsyncStorage.getItem('userData');
+        if (!storedUser) return;
+        const user = JSON.parse(storedUser);
+        if (user.status === 'Inactive' || user.status === 'Pending') return;
 
-        if (finalStatus === 'granted') {
-          try {
-            const projectId = Constants.expoConfig?.extra?.eas?.projectId || 'f4f9c5f5-fbb0-4058-a9a9-659e6c04bf1e';
-            const tokenRes = await Notifications.getExpoPushTokenAsync({ projectId });
-            const pushToken = tokenRes.data;
+        const isField = (user.staffType || user.department || '').includes('Field');
+        const today = new Date().toISOString().split('T')[0];
+        const cachedIn = await AsyncStorage.getItem(`punchIn_${today}`);
+        const cachedOut = await AsyncStorage.getItem(`punchOut_${today}`);
 
-            if (pushToken) {
-              const userDataStr = await AsyncStorage.getItem('userData');
-              if (userDataStr) {
-                const uData = JSON.parse(userDataStr);
-                const tokenPayload = { pushToken, updatedAt: new Date().toISOString() };
-                if (uData.uid) {
-                  await setDoc(doc(db, 'users', uData.uid), tokenPayload, { merge: true }).catch(() => {});
-                }
-                if (uData.empId) {
-                  await setDoc(doc(db, 'users', uData.empId), tokenPayload, { merge: true }).catch(() => {});
-                  await setDoc(doc(db, 'staff', uData.empId), tokenPayload, { merge: true }).catch(() => {});
-                }
-              }
-            }
-          } catch (tokErr) {
-            console.log("[PushToken] Failed to get Expo push token:", tokErr);
+        if (isField || (cachedIn && !cachedOut)) {
+          const hasStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+          if (!hasStarted) {
+            await startDutyLocationTracking(prompt);
           }
         }
-      } catch (e) {
-        console.warn('[Notifications] Setup failed:', e);
+      } catch (err) {
+        console.log('[Layout] Failed to auto-resume duty location tracking:', err);
       }
     }
-    configureNotifications();
+    resumeTrackingIfActive(true);
+
+    // Listen for AppState changes (e.g. when user returns from Settings after granting 'Allow all the time')
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') {
+        resumeTrackingIfActive(false);
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
   }, []);
 
   // ===== GLOBAL CHAT NOTIFICATION LISTENER =====
   // Listens for new messages in Firestore and triggers local notifications
-  // on ALL screens EXCEPT the chat screen (chat.tsx has its own room-level logic)
+  // on ALL screens EXCEPT the chat screen (chat.tsx handles its own room-level logic)
   useEffect(() => {
     if (!Notifications) return;
 
-    // Load current user data for filtering own messages
+    // Load current user data initially
     AsyncStorage.getItem('userData').then(data => {
       if (data) {
         try { currentUserRef.current = JSON.parse(data); } catch {}
@@ -207,7 +200,7 @@ function InnerLayout() {
 
     let isInitialLoad = true;
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
       // On first load, mark all existing messages as already-seen to avoid old notifications
       if (isInitialLoad) {
         snapshot.docs.forEach(d => notifiedMsgIdsRef.current.add(d.id));
@@ -215,8 +208,19 @@ function InnerLayout() {
         return;
       }
 
-      if (!currentUserRef.current) return;
-      const empId = currentUserRef.current.empId;
+      // Ensure currentUserRef is populated
+      if (!currentUserRef.current) {
+        try {
+          const stored = await AsyncStorage.getItem('userData');
+          if (stored) currentUserRef.current = JSON.parse(stored);
+        } catch {}
+      }
+
+      const user = currentUserRef.current;
+      if (!user) return;
+
+      const myEmpId = user.empId || '';
+      const myUid = user.uid || user.id || '';
       const now = Date.now();
 
       snapshot.docChanges().forEach((change) => {
@@ -232,33 +236,40 @@ function InnerLayout() {
         const data = change.doc.data();
 
         // Skip own messages
-        if (data.authorId === empId) return;
+        if (data.authorId === myEmpId || data.authorId === myUid) return;
 
-        // Check if message is recent (within 30 seconds)
+        // Check if message is recent (within 120 seconds)
         let msgTime = now;
         if (data.createdAt?.toMillis) {
           msgTime = data.createdAt.toMillis();
         } else if (data.createdAt?.seconds) {
           msgTime = data.createdAt.seconds * 1000;
         }
-        if (Math.abs(now - msgTime) > 30000) return;
+        if (Math.abs(now - msgTime) > 120000) return;
 
         // Check if current user is a participant
-        const isParticipant = data.roomId === 'group' ||
-          (data.participants && Array.isArray(data.participants) &&
-           (data.participants.includes(empId) || data.participants.includes('all')));
-        if (!isParticipant) return;
+        const isGroup = data.roomId === 'group';
+        const inRoomId = (myEmpId && data.roomId?.includes(myEmpId)) || (myUid && data.roomId?.includes(myUid));
+        const inParticipants = Array.isArray(data.participants) && (
+          data.participants.includes(myEmpId) ||
+          data.participants.includes(myUid) ||
+          data.participants.includes('all')
+        );
 
-        // Fire local notification
+        if (!isGroup && !inRoomId && !inParticipants) return;
+
+        // Fire local notification with sound and channel
         Notifications.scheduleNotificationAsync({
           content: {
-            title: data.author ? `${data.author}` : 'New Message',
+            title: data.author ? `${data.author}` : 'Ananya World',
             body: data.text || (data.attachments?.length ? 'Sent an attachment 📎' : 'New message received'),
-            sound: true,
+            sound: 'default',
+            priority: 'high',
+            channelId: 'default',
             data: { roomId: data.roomId, type: 'chat' },
           },
           trigger: null,
-        }).catch(() => {});
+        }).catch((err: any) => console.log('[GlobalNotif] Schedule error:', err));
       });
 
       // Prevent memory leak - trim the set if it grows too large

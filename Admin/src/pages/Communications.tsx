@@ -32,7 +32,8 @@ const sendExpoPushNotification = async (pushToken: string, title: string, body: 
         body: body || 'New Message',
         data: extraData,
         priority: 'high',
-        channelId: 'default'
+        channelId: 'default',
+        _displayInForeground: true
       }),
     });
     const resData = await res.json();
@@ -585,11 +586,26 @@ export default function Communications({ branchesList = [], profileData, setShow
           }
         } else {
           // Broadcast to all staff for group/announcement messages
+          const sentTokens = new Set<string>();
           staffList.forEach(s => {
-            if (s.pushToken) {
+            if (s.pushToken && !sentTokens.has(s.pushToken)) {
+              sentTokens.add(s.pushToken);
               sendExpoPushNotification(s.pushToken, 'Ananya World', msgText || '[Attachment]', { type: 'chat' });
             }
           });
+
+          // Also check users collection to ensure any newly registered tokens are included
+          try {
+            const qUsers = query(collection(db, 'users'), where('role', '==', 'staff'));
+            const uSnap = await getDocs(qUsers);
+            uSnap.forEach(d => {
+              const t = d.data().pushToken;
+              if (t && !sentTokens.has(t)) {
+                sentTokens.add(t);
+                sendExpoPushNotification(t, 'Ananya World', msgText || '[Attachment]', { type: 'chat' });
+              }
+            });
+          } catch {}
         }
       } catch (pErr) {
         console.error("Error sending message push notification:", pErr);
