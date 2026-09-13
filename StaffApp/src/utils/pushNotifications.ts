@@ -66,14 +66,25 @@ export const registerForPushNotificationsAsync = async (userParam?: any): Promis
   try {
     // 1. Android Notification Channel configuration
     if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('default', {
-        name: 'Default Notifications',
+      const channelConfig = {
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#003B95',
         sound: 'default',
         enableVibrate: true,
         showBadge: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        bypassDnd: true,
+      };
+
+      await Notifications.setNotificationChannelAsync('default', {
+        name: 'Default Notifications',
+        ...channelConfig,
+      });
+
+      await Notifications.setNotificationChannelAsync('chat-messages', {
+        name: 'Chat Messages',
+        ...channelConfig,
       });
     }
 
@@ -139,7 +150,7 @@ export const sendExpoPushNotification = async (pushToken: string, title: string,
       body: body || 'New Message',
       data: extraData,
       priority: 'high',
-      channelId: 'default',
+      channelId: 'chat-messages',
       _displayInForeground: true,
     };
 

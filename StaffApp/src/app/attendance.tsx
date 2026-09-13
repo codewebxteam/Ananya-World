@@ -1068,6 +1068,16 @@ export default function AttendanceScreen() {
         disabled: false
       };
     }
+    if (userRole === 'Field') {
+      return {
+        bgClass: 'bg-[#F0FDF4] border-green-100',
+        iconBgClass: 'bg-[#138A43]',
+        icon: <Globe color="white" size={20} />,
+        title: 'Field Duty Active',
+        subtitle: 'Live location automatically shared for admin tracking (24x7).',
+        disabled: true
+      };
+    }
     if (punchOutTime) {
       return {
         bgClass: 'bg-gray-50 border-gray-200',
@@ -1084,18 +1094,8 @@ export default function AttendanceScreen() {
         iconBgClass: 'bg-[#138A43]',
         icon: <MapPin color="white" size={20} />,
         title: 'Punched In (On Duty)',
-        subtitle: userRole === 'Field' ? 'Live tracking is active.' : 'Office Location Verified.',
+        subtitle: 'Office Location Verified.',
         disabled: false
-      };
-    }
-    if (userRole === 'Field') {
-      return {
-        bgClass: 'bg-[#F0FDF4] border-green-100',
-        iconBgClass: 'bg-[#138A43]',
-        icon: <Globe color="white" size={20} />,
-        title: 'Field Duty Active',
-        subtitle: 'Live location automatically shared for admin tracking.',
-        disabled: true
       };
     }
     if (userRole === 'Office' && isNearOffice) {
