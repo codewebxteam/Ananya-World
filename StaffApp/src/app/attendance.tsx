@@ -328,8 +328,10 @@ export default function AttendanceScreen() {
           // 3. Determine default Weekly Off day
           const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
           const todayDayName = daysOfWeek[new Date().getDay()];
-          const defaultWeeklyOff = parsed.weeklyOff || 'Sunday';
-          const isTodayDefaultOff = todayDayName === defaultWeeklyOff;
+          const isFieldStaff = (parsed.staffType || parsed.department || '').includes('Field');
+          const hasWeeklyOff = Boolean(parsed.weeklyOff && parsed.weeklyOff !== 'None' && parsed.weeklyOff !== 'No Weekly Off');
+          const defaultWeeklyOff = hasWeeklyOff ? parsed.weeklyOff : (isFieldStaff ? null : 'Sunday');
+          const isTodayDefaultOff = defaultWeeklyOff ? todayDayName.toLowerCase() === defaultWeeklyOff.toLowerCase() : false;
           setIsHoliday(isTodayDefaultOff);
           globalAttendanceCache.isHoliday = isTodayDefaultOff;
 
@@ -670,7 +672,9 @@ export default function AttendanceScreen() {
     }
 
     const combinedMap = new Map<string, any>();
-    const userWeeklyOff = userData?.weeklyOff || 'Sunday';
+    const isFieldStaff = (userData?.staffType || userData?.department || '').includes('Field');
+    const hasWeeklyOff = Boolean(userData?.weeklyOff && userData?.weeklyOff !== 'None' && userData?.weeklyOff !== 'No Weekly Off');
+    const userWeeklyOff = hasWeeklyOff ? userData?.weeklyOff : (isFieldStaff ? null : 'Sunday');
     
     // Format today's date string in local timezone YYYY-MM-DD
     const localToday = new Date();
@@ -728,7 +732,7 @@ export default function AttendanceScreen() {
       }
       
       // 3. Check if it is a Weekly Off day
-      if (dayName.toLowerCase() === userWeeklyOff.toLowerCase()) {
+      if (userWeeklyOff && dayName.toLowerCase() === userWeeklyOff.toLowerCase()) {
         combinedMap.set(dateStr, {
           id: `weeklyoff_${dateStr}`,
           date: dateStr,

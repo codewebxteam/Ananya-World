@@ -34,7 +34,10 @@ function calculateCycleStats(
   const todayStr = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, '0')}-${String(localToday.getDate()).padStart(2, '0')}`;
 
   const combinedMap = new Map<string, any>();
-  const userWeeklyOff = staffData?.weeklyOff || userData?.weeklyOff || 'Sunday';
+  const isFieldStaff = (staffData?.staffType || staffData?.department || userData?.staffType || userData?.department || '').includes('Field');
+  const rawWeeklyOff = staffData?.weeklyOff || userData?.weeklyOff;
+  const hasWeeklyOff = Boolean(rawWeeklyOff && rawWeeklyOff !== 'None' && rawWeeklyOff !== 'No Weekly Off');
+  const userWeeklyOff = hasWeeklyOff ? rawWeeklyOff : (isFieldStaff ? null : 'Sunday');
 
   const tempStart = new Date(startDate);
   tempStart.setHours(0,0,0,0);
@@ -87,7 +90,7 @@ function calculateCycleStats(
     }
     
     // 3. Check Weekly Off
-    if (dayName.toLowerCase() === userWeeklyOff.toLowerCase()) {
+    if (userWeeklyOff && dayName.toLowerCase() === userWeeklyOff.toLowerCase()) {
       combinedMap.set(dateStr, {
         status: 'Weekly Off',
         date: dateStr

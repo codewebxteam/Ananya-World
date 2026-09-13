@@ -500,8 +500,10 @@ export default function HomeScreen() {
           // 5. Determine default Weekly Off day
           const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
           const todayDayName = daysOfWeek[new Date().getDay()];
-          const defaultWeeklyOff = parsed.weeklyOff || 'Sunday';
-          const isTodayDefaultOff = todayDayName === defaultWeeklyOff;
+          const isFieldStaff = (parsed.staffType || parsed.department || '').includes('Field');
+          const hasWeeklyOff = Boolean(parsed.weeklyOff && parsed.weeklyOff !== 'None' && parsed.weeklyOff !== 'No Weekly Off');
+          const defaultWeeklyOff = hasWeeklyOff ? parsed.weeklyOff : (isFieldStaff ? null : 'Sunday');
+          const isTodayDefaultOff = isFieldStaff ? false : (defaultWeeklyOff ? todayDayName.toLowerCase() === defaultWeeklyOff.toLowerCase() : false);
           setIsHoliday(isTodayDefaultOff);
           globalHomeCache.isHoliday = isTodayDefaultOff;
 
@@ -829,7 +831,9 @@ export default function HomeScreen() {
     }
 
     const combinedMap = new Map<string, any>();
-    const userWeeklyOff = userData?.weeklyOff || 'Sunday';
+    const isFieldStaff = (userData?.staffType || userData?.department || '').includes('Field');
+    const hasWeeklyOff = Boolean(userData?.weeklyOff && userData?.weeklyOff !== 'None' && userData?.weeklyOff !== 'No Weekly Off');
+    const userWeeklyOff = hasWeeklyOff ? userData?.weeklyOff : (isFieldStaff ? null : 'Sunday');
     const todayStr = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, '0')}-${String(localToday.getDate()).padStart(2, '0')}`;
     
     for (let d = new Date(actualStart); d <= cycleEnd; d.setDate(d.getDate() + 1)) {
@@ -878,7 +882,7 @@ export default function HomeScreen() {
       }
       
       // 3. Check Weekly Off
-      if (dayName.toLowerCase() === userWeeklyOff.toLowerCase()) {
+      if (userWeeklyOff && dayName.toLowerCase() === userWeeklyOff.toLowerCase()) {
         combinedMap.set(dateStr, {
           status: 'Weekly Off',
           date: dateStr
@@ -975,6 +979,9 @@ export default function HomeScreen() {
   // Live Auto Punch-Out Watcher
   useEffect(() => {
     if (punchInTime && !punchOutTime && userData) {
+      if ((userData.staffType || userData.department || '').includes('Field') || userRole === 'Field') {
+        return; // Field staff is 24/7 continuous duty and NEVER auto-punches out!
+      }
       const shiftEndTime = userData.shiftEndTime || '18:00';
       const [hour, minute] = shiftEndTime.split(':').map(Number);
       const shiftEndLocal = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), hour, minute, 0, 0);
@@ -1238,6 +1245,16 @@ export default function HomeScreen() {
   const formattedSalaryDate = nextSalaryDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
   const getBannerDetails = () => {
+    if (userRole === 'Field') {
+      return {
+        bgClass: 'bg-[#F0FDF4] border-green-100',
+        iconBgClass: 'bg-[#138A43]',
+        icon: <Globe color="white" size={20} />,
+        title: '24/7 Field Live Active',
+        subtitle: 'Live location continuously shared with Admin.',
+        disabled: true
+      };
+    }
     if (isCompanyHoliday && holidayData) {
       return {
         bgClass: 'bg-[#FEF3C7] border-[#FDE68A]', // festive gold
@@ -1304,18 +1321,8 @@ export default function HomeScreen() {
         iconBgClass: 'bg-[#138A43]',
         icon: <MapPin color="white" size={20} />,
         title: 'Punched In (On Duty)',
-        subtitle: userRole === 'Field' ? 'Live tracking is active.' : 'Office Location Verified.',
+        subtitle: 'Office Location Verified.',
         disabled: false
-      };
-    }
-    if (userRole === 'Field') {
-      return {
-        bgClass: 'bg-[#F0FDF4] border-green-100',
-        iconBgClass: 'bg-[#138A43]',
-        icon: <Globe color="white" size={20} />,
-        title: 'Field Duty Active',
-        subtitle: 'Live location automatically shared for admin tracking.',
-        disabled: true
       };
     }
     if (userRole === 'Office' && isNearOffice) {

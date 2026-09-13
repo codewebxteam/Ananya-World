@@ -8,7 +8,7 @@ import {
     Users, Megaphone, ChevronRight, ArrowLeft, Search,
     Pin, FileText, Download, PlayCircle, Plus, Smile,
     Send, Image as ImageIcon, Camera, File, Video as VideoIcon, Mic, MapPin, ThumbsUp,
-    Square, Play, Pause, Lock
+    Square, Play, Pause, Lock, Clock
 } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
@@ -288,6 +288,9 @@ export default function ChatScreen() {
 
                     // Check if current user is a participant of this message
                     const isParticipant = data.roomId === 'group' || 
+                        !data.roomId ||
+                        data.roomId?.startsWith('custom_group_') ||
+                        (storedEmpId && data.roomId?.includes(storedEmpId)) ||
                         (data.participants && Array.isArray(data.participants) && 
                          (data.participants.includes(storedEmpId) || data.participants.includes('all')));
 
@@ -301,7 +304,7 @@ export default function ChatScreen() {
                                 body: data.text || (data.attachments?.length ? "Sent an attachment 📎" : "New message received"),
                                 sound: 'default',
                                 priority: 'high',
-                                channelId: 'default',
+                                channelId: 'chat-messages',
                                 data: { roomId: data.roomId, type: 'chat' },
                             },
                             trigger: null,
@@ -1087,22 +1090,146 @@ export default function ChatScreen() {
     });
 
     if (activeRoomId === null) {
-        const isCurrentUserOffice = userData?.staffType === 'Office Staff';
-        const filteredStaff = staffList.filter(s => {
-            // Filter out Field Staff if logged in user is Office Staff
-            if (isCurrentUserOffice && s.staffType === 'Field Staff') {
-                return false;
+        const getMessageTimestamp = (m: any): number => {
+            if (!m) return 0;
+            if (m.createdAt?.toMillis) return m.createdAt.toMillis();
+            if (m.createdAt?.seconds) return m.createdAt.seconds * 1000;
+            if (typeof m.createdAt === 'string') return new Date(m.createdAt).getTime();
+            if (typeof m.createdAt === 'number') return m.createdAt;
+            return 0;
+        };
+
+        const formatChatTime = (timestamp: number): string => {
+            if (!timestamp) return '';
+            const date = new Date(timestamp);
+            const now = new Date();
+            const isToday = date.toDateString() === now.toDateString();
+            
+            const yesterday = new Date(now);
+            yesterday.setDate(yesterday.getDate() - 1);
+            const isYesterday = date.toDateString() === yesterday.toDateString();
+
+            if (isToday) {
+                return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            } else if (isYesterday) {
+                return 'Yesterday';
+            } else {
+                return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
             }
-            const queryLower = searchQuery.toLowerCase();
+        };
+
+        const getMessagePreview = (msg: any): string => {
+            if (!msg) return 'No messages yet';
+            if (msg.text && msg.text.trim().length > 0) return msg.text;
+            if (msg.attachments && msg.attachments.length > 0) {
+                const first = msg.attachments[0];
+                if (first.type === 'audio' || first.url?.includes('.m4a') || first.url?.includes('.mp3')) return '🎙️ Voice message';
+                if (first.type === 'image' || first.url?.includes('.jpg') || first.url?.includes('.png') || first.url?.includes('.webp')) return '📷 Photo';
+                return '📎 Attachment';
+            }
+            return 'New message';
+        };
+
+        // Real-time lookup: latest message for each room
+        const latestMessageByRoom: { [roomId: string]: any } = {};
+        messages.forEach(m => {
+            if (m.roomId) {
+                const existing = latestMessageByRoom[m.roomId];
+                if (!existing || getMessageTimestamp(m) >= getMessageTimestamp(existing)) {
+                    latestMessageByRoom[m.roomId] = m;
+                }
+            }
+        });
+
+        const isCurrentUserOffice = userData?.staffType === 'Office Staff';
+        const eligibleStaff = staffList.filter(s => {
+            if (isCurrentUserOffice && s.staffType === 'Field Staff') return false;
+            return true;
+        });
+
+        const queryLower = searchQuery.toLowerCase().trim();
+
+        // 1. Calculate active conversations (staff & custom groups) that have messages or unread count
+        const activeStaffChats = eligibleStaff.map(staff => {
+            const roomId = 'private_' + [userData?.empId, staff.empId].sort().join('_');
+            const lastMsg = latestMessageByRoom[roomId];
+            const lastTime = getMessageTimestamp(lastMsg);
+            const unread = getUnreadCount(roomId);
+            return {
+                type: 'staff' as const,
+                staff,
+                roomId,
+                lastMsg,
+                lastTime,
+                unread,
+                displayName: staff.name,
+                avatar: staff.avatar,
+                subTitle: staff.designation || staff.staffType || getBranchDisplayName(staff.branchName, staff.branchId) || 'Staff'
+            };
+        }).filter(item => item.lastTime > 0 || item.unread > 0);
+
+        const activeGroupChats = customGroups.map(group => {
+            const roomId = `custom_group_${group.id}`;
+            const lastMsg = latestMessageByRoom[roomId];
+            const lastTime = getMessageTimestamp(lastMsg);
+            const unread = getUnreadCount(roomId);
+            return {
+                type: 'group' as const,
+                group,
+                roomId,
+                lastMsg,
+                lastTime,
+                unread,
+                displayName: group.name,
+                avatar: null,
+                subTitle: `${group.members?.length || 0} members`
+            };
+        }).filter(item => item.lastTime > 0 || item.unread > 0);
+
+        // Sort all recent conversations: unread first, then by latest message time (descending)
+        const recentConversations = [...activeStaffChats, ...activeGroupChats].sort((a, b) => {
+            if ((a.unread > 0) !== (b.unread > 0)) {
+                return a.unread > 0 ? -1 : 1;
+            }
+            return b.lastTime - a.lastTime;
+        }).filter(item => {
+            if (!queryLower) return true;
+            return (item.displayName || '').toLowerCase().includes(queryLower);
+        });
+
+        // 2. Staff directory filter & sort: active / recently messaged staff float to the top of branch sections as well!
+        const filteredStaff = eligibleStaff.filter(s => {
+            if (!queryLower) return true;
             return (s.name || '').toLowerCase().includes(queryLower) ||
                    (s.empId || '').toLowerCase().includes(queryLower);
         });
 
-        const myBranchStaff = filteredStaff.filter(s => s.branchId && s.branchId === userData?.branchId)
-            .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-            
-        const otherBranchStaff = filteredStaff.filter(s => !s.branchId || s.branchId !== userData?.branchId)
-            .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        const sortStaffByRecent = (a: any, b: any) => {
+            const rA = 'private_' + [userData?.empId, a.empId].sort().join('_');
+            const rB = 'private_' + [userData?.empId, b.empId].sort().join('_');
+            const unreadA = getUnreadCount(rA);
+            const unreadB = getUnreadCount(rB);
+            if ((unreadA > 0) !== (unreadB > 0)) return unreadA > 0 ? -1 : 1;
+            const tA = getMessageTimestamp(latestMessageByRoom[rA]);
+            const tB = getMessageTimestamp(latestMessageByRoom[rB]);
+            if (tA !== tB) return tB - tA;
+            return (a.name || '').localeCompare(b.name || '');
+        };
+
+        const myBranchStaff = filteredStaff
+            .filter(s => s.branchId && s.branchId === userData?.branchId)
+            .sort(sortStaffByRecent);
+
+        const otherBranchStaff = filteredStaff
+            .filter(s => !s.branchId || s.branchId !== userData?.branchId)
+            .sort(sortStaffByRecent);
+
+        // Custom groups sorted by latest message
+        const sortedCustomGroups = [...customGroups].sort((a, b) => {
+            const tA = getMessageTimestamp(latestMessageByRoom[`custom_group_${a.id}`]);
+            const tB = getMessageTimestamp(latestMessageByRoom[`custom_group_${b.id}`]);
+            return tB - tA;
+        });
 
         const adminRoomId = `private_admin_${userData?.empId}`;
         const adminUnreadCount = getUnreadCount(adminRoomId);
@@ -1116,6 +1243,15 @@ export default function ChatScreen() {
             const roomId = 'private_' + [userData?.empId, staff.empId].sort().join('_');
             totalUnread += getUnreadCount(roomId);
         });
+
+        // Pinned messages preview & time
+        const lastGroupMsg = latestMessageByRoom['group'];
+        const groupPreview = lastGroupMsg ? `${lastGroupMsg.author || 'Staff'}: ${getMessagePreview(lastGroupMsg)}` : 'Broadcast and normal messages with all staff';
+        const groupTime = formatChatTime(getMessageTimestamp(lastGroupMsg));
+
+        const lastAdminMsg = latestMessageByRoom[adminRoomId];
+        const adminPreview = lastAdminMsg ? `${lastAdminMsg.author === 'Admin' ? 'Admin' : 'You'}: ${getMessagePreview(lastAdminMsg)}` : 'Direct 1-to-1 conversation with Administrator';
+        const adminTime = formatChatTime(getMessageTimestamp(lastAdminMsg));
 
         return (
             <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
@@ -1172,6 +1308,9 @@ export default function ChatScreen() {
                                 <View className="flex-row justify-between items-center">
                                     <Text className="text-[#1E3A8A] font-extrabold text-base">Team Group Chat</Text>
                                     <View className="flex-row items-center gap-1">
+                                        {groupTime ? (
+                                            <Text className="text-[9px] text-blue-500 font-semibold mr-1">{groupTime}</Text>
+                                        ) : null}
                                         {teamUnreadCount > 0 && (
                                             <View className="bg-red-500 rounded-full px-1.5 py-0.5 min-w-[16px] items-center justify-center mr-1">
                                                 <Text className="text-white text-[9px] font-black">{teamUnreadCount}</Text>
@@ -1183,7 +1322,7 @@ export default function ChatScreen() {
                                         </View>
                                     </View>
                                 </View>
-                                <Text className="text-blue-700/80 text-xs mt-0.5" numberOfLines={1}>Broadcast and normal messages with all staff</Text>
+                                <Text className="text-blue-700/80 text-xs mt-0.5" numberOfLines={1}>{groupPreview}</Text>
                             </View>
                         </TouchableOpacity>
 
@@ -1210,6 +1349,9 @@ export default function ChatScreen() {
                                 <View className="flex-row justify-between items-center">
                                     <Text className="text-[#581C87] font-extrabold text-base">Chat with Admin</Text>
                                     <View className="flex-row items-center gap-1">
+                                        {adminTime ? (
+                                            <Text className="text-[9px] text-purple-400 font-semibold mr-1">{adminTime}</Text>
+                                        ) : null}
                                         {adminUnreadCount > 0 && (
                                             <View className="bg-red-500 rounded-full px-1.5 py-0.5 min-w-[16px] items-center justify-center mr-1">
                                                 <Text className="text-white text-[9px] font-black">{adminUnreadCount}</Text>
@@ -1221,51 +1363,134 @@ export default function ChatScreen() {
                                         </View>
                                     </View>
                                 </View>
-                                <Text className="text-purple-700/80 text-xs mt-0.5" numberOfLines={1}>Direct 1-to-1 conversation with Administrator</Text>
+                                <Text className="text-purple-700/80 text-xs mt-0.5" numberOfLines={1}>{adminPreview}</Text>
                             </View>
                         </TouchableOpacity>
                     </View>
 
+                    {/* LIVE RECENT CONVERSATIONS (Whoever messages jumps to the top!) */}
+                    {recentConversations.length > 0 && (
+                        <View className="mb-6">
+                            <View className="flex-row items-center justify-between mb-2">
+                                <Text className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">
+                                    Recent Conversations ({recentConversations.length})
+                                </Text>
+                                <View className="flex-row items-center gap-1 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
+                                    <Clock size={10} color="#2563EB" />
+                                    <Text className="text-[8px] font-extrabold text-blue-600 uppercase">Live</Text>
+                                </View>
+                            </View>
+                            <View className="bg-white rounded-2xl p-2 border border-blue-100/70 shadow-sm shadow-blue-900/5">
+                                {recentConversations.map((item, idx) => {
+                                    const isGroup = item.type === 'group';
+                                    const lastPreview = getMessagePreview(item.lastMsg);
+                                    const timeStr = formatChatTime(item.lastTime);
+
+                                    return (
+                                        <TouchableOpacity
+                                            key={item.roomId}
+                                            activeOpacity={0.7}
+                                            onPress={() => {
+                                                if (isGroup) {
+                                                    setActiveRoomId(`custom_group_${item.group.id}`);
+                                                    setActivePartner({
+                                                        name: item.group.name,
+                                                        members: item.group.members,
+                                                        isCustomGroup: true
+                                                    });
+                                                } else {
+                                                    setActiveRoomId(item.roomId);
+                                                    setActivePartner(item.staff);
+                                                }
+                                            }}
+                                            className={`flex-row items-center p-3 rounded-xl gap-3 ${idx < recentConversations.length - 1 ? 'border-b border-gray-50' : ''}`}
+                                        >
+                                            {isGroup ? (
+                                                <View className="w-12 h-12 rounded-2xl bg-indigo-600 items-center justify-center">
+                                                    <Users color="white" size={22} />
+                                                </View>
+                                            ) : (
+                                                <View className="w-12 h-12 rounded-full bg-blue-50 border border-blue-100 items-center justify-center overflow-hidden">
+                                                    {item.avatar ? (
+                                                        <Image source={{ uri: item.avatar }} className="w-full h-full rounded-full" resizeMode="cover" />
+                                                    ) : (
+                                                        <Text className="text-blue-600 font-bold text-lg uppercase">{item.displayName?.charAt(0)}</Text>
+                                                    )}
+                                                </View>
+                                            )}
+                                            <View className="flex-1 min-w-0">
+                                                <View className="flex-row justify-between items-center mb-0.5">
+                                                    <Text className="text-gray-900 font-extrabold text-sm truncate flex-1 mr-2" numberOfLines={1}>
+                                                        {item.displayName}
+                                                    </Text>
+                                                    {timeStr ? (
+                                                        <Text className="text-[10px] text-gray-400 font-semibold">{timeStr}</Text>
+                                                    ) : null}
+                                                </View>
+                                                <View className="flex-row justify-between items-center">
+                                                    <Text className={`text-xs truncate flex-1 mr-2 ${item.unread > 0 ? 'text-gray-900 font-bold' : 'text-gray-500'}`} numberOfLines={1}>
+                                                        {lastPreview}
+                                                    </Text>
+                                                    {item.unread > 0 && (
+                                                        <View className="bg-red-500 rounded-full px-1.5 py-0.5 min-w-[18px] items-center justify-center">
+                                                            <Text className="text-white text-[9px] font-black">{item.unread}</Text>
+                                                        </View>
+                                                    )}
+                                                </View>
+                                                <Text className="text-[9px] text-gray-400 mt-0.5">{item.subTitle}</Text>
+                                            </View>
+                                            <ChevronRight size={16} color="#CBD5E1" />
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
+                        </View>
+                    )}
+
                     {/* Custom Groups Section */}
-                    {customGroups.length > 0 && (
+                    {sortedCustomGroups.length > 0 && (
                         <View className="mb-6">
                             <Text className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider mb-2">
-                                Custom Groups ({customGroups.length})
+                                Custom Groups ({sortedCustomGroups.length})
                             </Text>
                             <View className="bg-white rounded-2xl p-2 border border-indigo-50 shadow-sm">
-                                {customGroups.map((group, idx) => {
-                                    const lastMsg = messages.filter(m => m.roomId === `custom_group_${group.id}`).slice(-1)[0];
+                                {sortedCustomGroups.map((group, idx) => {
+                                    const roomId = `custom_group_${group.id}`;
+                                    const lastMsg = latestMessageByRoom[roomId];
+                                    const timeStr = formatChatTime(getMessageTimestamp(lastMsg));
+                                    const unread = getUnreadCount(roomId);
                                     return (
                                         <TouchableOpacity
                                             key={group.id}
                                             activeOpacity={0.7}
                                             onPress={() => {
-                                                setActiveRoomId(`custom_group_${group.id}`);
+                                                setActiveRoomId(roomId);
                                                 setActivePartner({
                                                     name: group.name,
                                                     members: group.members,
                                                     isCustomGroup: true
                                                 });
                                             }}
-                                            className={`flex-row items-center p-3 rounded-xl gap-3 ${idx < customGroups.length - 1 ? 'border-b border-gray-50' : ''}`}
+                                            className={`flex-row items-center p-3 rounded-xl gap-3 ${idx < sortedCustomGroups.length - 1 ? 'border-b border-gray-50' : ''}`}
                                         >
                                             <View className="w-11 h-11 rounded-2xl bg-indigo-600 items-center justify-center">
                                                 <Users color="white" size={22} />
                                             </View>
-                                            <View className="flex-1">
+                                            <View className="flex-1 min-w-0">
                                                 <View className="flex-row justify-between items-center">
                                                     <Text className="text-gray-900 font-extrabold text-sm">{group.name}</Text>
-                                                    <View className="flex-row items-center gap-2">
-                                                        {getUnreadCount(`custom_group_${group.id}`) > 0 && (
+                                                    <View className="flex-row items-center gap-1.5">
+                                                        {timeStr ? <Text className="text-[9px] text-gray-400 font-medium">{timeStr}</Text> : null}
+                                                        {unread > 0 && (
                                                             <View className="bg-red-500 rounded-full px-1.5 py-0.5 min-w-[16px] items-center justify-center">
-                                                                <Text className="text-white text-[9px] font-black">{getUnreadCount(`custom_group_${group.id}`)}</Text>
+                                                                <Text className="text-white text-[9px] font-black">{unread}</Text>
                                                             </View>
                                                         )}
                                                         <Text className="text-[9px] text-gray-400 font-bold">{group.members?.length || 0} members</Text>
                                                     </View>
                                                 </View>
                                                 <Text className="text-gray-500 text-[11px] mt-0.5" numberOfLines={1}>
-                                                    {lastMsg?.text || (lastMsg?.attachments?.length ? '[Attachment]' : 'No messages yet')}
+                                                    {getMessagePreview(lastMsg)}
                                                 </Text>
                                             </View>
                                             <ChevronRight size={18} color="#9CA3AF" />
@@ -1283,38 +1508,46 @@ export default function ChatScreen() {
                                 📍 My Branch Staff ({getBranchDisplayName(userData?.branchName, userData?.branchId) || 'Same Branch'})
                             </Text>
                             <View className="bg-white rounded-2xl p-2 border border-gray-100 shadow-sm">
-                                {myBranchStaff.map((staff, idx) => (
-                                    <TouchableOpacity
-                                        key={staff.uid}
-                                        activeOpacity={0.7}
-                                        onPress={() => {
-                                            const roomId = 'private_' + [userData.empId, staff.empId].sort().join('_');
-                                            setActiveRoomId(roomId);
-                                            setActivePartner(staff);
-                                        }}
-                                        className={`flex-row items-center p-3 rounded-xl gap-3 ${idx < myBranchStaff.length - 1 ? 'border-b border-gray-50' : ''}`}
-                                    >
-                                        <View className="w-11 h-11 rounded-full bg-emerald-50 border border-emerald-100 items-center justify-center">
-                                            {staff.avatar ? (
-                                                <Image source={{ uri: staff.avatar }} className="w-full h-full rounded-full" resizeMode="cover" />
-                                            ) : (
-                                                <Text className="text-emerald-600 font-bold text-lg uppercase">{staff.name?.charAt(0)}</Text>
-                                            )}
-                                        </View>
-                                        <View className="flex-1">
-                                            <Text className="text-gray-900 font-extrabold text-sm">{staff.name}</Text>
-                                            <Text className="text-gray-500 text-[10px] mt-0.5">{staff.designation || staff.staffType || 'Staff'}</Text>
-                                        </View>
-                                        {getUnreadCount('private_' + [userData.empId, staff.empId].sort().join('_')) > 0 && (
-                                            <View className="bg-red-500 rounded-full px-1.5 py-0.5 min-w-[16px] items-center justify-center mr-1">
-                                                <Text className="text-white text-[9px] font-black">
-                                                    {getUnreadCount('private_' + [userData.empId, staff.empId].sort().join('_'))}
+                                {myBranchStaff.map((staff, idx) => {
+                                    const roomId = 'private_' + [userData.empId, staff.empId].sort().join('_');
+                                    const lastMsg = latestMessageByRoom[roomId];
+                                    const timeStr = formatChatTime(getMessageTimestamp(lastMsg));
+                                    const unread = getUnreadCount(roomId);
+                                    return (
+                                        <TouchableOpacity
+                                            key={staff.uid}
+                                            activeOpacity={0.7}
+                                            onPress={() => {
+                                                setActiveRoomId(roomId);
+                                                setActivePartner(staff);
+                                            }}
+                                            className={`flex-row items-center p-3 rounded-xl gap-3 ${idx < myBranchStaff.length - 1 ? 'border-b border-gray-50' : ''}`}
+                                        >
+                                            <View className="w-11 h-11 rounded-full bg-emerald-50 border border-emerald-100 items-center justify-center">
+                                                {staff.avatar ? (
+                                                    <Image source={{ uri: staff.avatar }} className="w-full h-full rounded-full" resizeMode="cover" />
+                                                ) : (
+                                                    <Text className="text-emerald-600 font-bold text-lg uppercase">{staff.name?.charAt(0)}</Text>
+                                                )}
+                                            </View>
+                                            <View className="flex-1 min-w-0">
+                                                <View className="flex-row justify-between items-center">
+                                                    <Text className="text-gray-900 font-extrabold text-sm">{staff.name}</Text>
+                                                    {timeStr ? <Text className="text-[9px] text-gray-400 font-medium">{timeStr}</Text> : null}
+                                                </View>
+                                                <Text className="text-gray-500 text-[10px] mt-0.5 truncate" numberOfLines={1}>
+                                                    {lastMsg ? getMessagePreview(lastMsg) : (staff.designation || staff.staffType || 'Staff')}
                                                 </Text>
                                             </View>
-                                        )}
-                                        <ChevronRight size={18} color="#9CA3AF" />
-                                    </TouchableOpacity>
-                                ))}
+                                            {unread > 0 && (
+                                                <View className="bg-red-500 rounded-full px-1.5 py-0.5 min-w-[16px] items-center justify-center mr-1">
+                                                    <Text className="text-white text-[9px] font-black">{unread}</Text>
+                                                </View>
+                                            )}
+                                            <ChevronRight size={18} color="#9CA3AF" />
+                                        </TouchableOpacity>
+                                    );
+                                })}
                             </View>
                         </View>
                     )}
@@ -1326,40 +1559,46 @@ export default function ChatScreen() {
                                 Other Branches Staff
                             </Text>
                             <View className="bg-white rounded-2xl p-2 border border-gray-100 shadow-sm">
-                                {otherBranchStaff.map((staff, idx) => (
-                                    <TouchableOpacity
-                                        key={staff.uid}
-                                        activeOpacity={0.7}
-                                        onPress={() => {
-                                            const roomId = 'private_' + [userData.empId, staff.empId].sort().join('_');
-                                            setActiveRoomId(roomId);
-                                            setActivePartner(staff);
-                                        }}
-                                        className={`flex-row items-center p-3 rounded-xl gap-3 ${idx < otherBranchStaff.length - 1 ? 'border-b border-gray-50' : ''}`}
-                                    >
-                                        <View className="w-11 h-11 rounded-full bg-blue-50 border border-blue-100 items-center justify-center">
-                                            {staff.avatar ? (
-                                                <Image source={{ uri: staff.avatar }} className="w-full h-full rounded-full" resizeMode="cover" />
-                                            ) : (
-                                                <Text className="text-blue-600 font-bold text-lg uppercase">{staff.name?.charAt(0)}</Text>
-                                            )}
-                                        </View>
-                                        <View className="flex-1">
-                                            <Text className="text-gray-900 font-extrabold text-sm">{staff.name}</Text>
-                                            <Text className="text-gray-500 text-[10px] mt-0.5">
-                                                {staff.designation || staff.staffType || 'Staff'} ({getBranchDisplayName(staff.branchName, staff.branchId)})
-                                            </Text>
-                                        </View>
-                                        {getUnreadCount('private_' + [userData.empId, staff.empId].sort().join('_')) > 0 && (
-                                            <View className="bg-red-500 rounded-full px-1.5 py-0.5 min-w-[16px] items-center justify-center mr-1">
-                                                <Text className="text-white text-[9px] font-black">
-                                                    {getUnreadCount('private_' + [userData.empId, staff.empId].sort().join('_'))}
+                                {otherBranchStaff.map((staff, idx) => {
+                                    const roomId = 'private_' + [userData.empId, staff.empId].sort().join('_');
+                                    const lastMsg = latestMessageByRoom[roomId];
+                                    const timeStr = formatChatTime(getMessageTimestamp(lastMsg));
+                                    const unread = getUnreadCount(roomId);
+                                    return (
+                                        <TouchableOpacity
+                                            key={staff.uid}
+                                            activeOpacity={0.7}
+                                            onPress={() => {
+                                                setActiveRoomId(roomId);
+                                                setActivePartner(staff);
+                                            }}
+                                            className={`flex-row items-center p-3 rounded-xl gap-3 ${idx < otherBranchStaff.length - 1 ? 'border-b border-gray-50' : ''}`}
+                                        >
+                                            <View className="w-11 h-11 rounded-full bg-blue-50 border border-blue-100 items-center justify-center">
+                                                {staff.avatar ? (
+                                                    <Image source={{ uri: staff.avatar }} className="w-full h-full rounded-full" resizeMode="cover" />
+                                                ) : (
+                                                    <Text className="text-blue-600 font-bold text-lg uppercase">{staff.name?.charAt(0)}</Text>
+                                                )}
+                                            </View>
+                                            <View className="flex-1 min-w-0">
+                                                <View className="flex-row justify-between items-center">
+                                                    <Text className="text-gray-900 font-extrabold text-sm">{staff.name}</Text>
+                                                    {timeStr ? <Text className="text-[9px] text-gray-400 font-medium">{timeStr}</Text> : null}
+                                                </View>
+                                                <Text className="text-gray-500 text-[10px] mt-0.5 truncate" numberOfLines={1}>
+                                                    {lastMsg ? getMessagePreview(lastMsg) : `${staff.designation || staff.staffType || 'Staff'} (${getBranchDisplayName(staff.branchName, staff.branchId)})`}
                                                 </Text>
                                             </View>
-                                        )}
-                                        <ChevronRight size={18} color="#9CA3AF" />
-                                    </TouchableOpacity>
-                                ))}
+                                            {unread > 0 && (
+                                                <View className="bg-red-500 rounded-full px-1.5 py-0.5 min-w-[16px] items-center justify-center mr-1">
+                                                    <Text className="text-white text-[9px] font-black">{unread}</Text>
+                                                </View>
+                                            )}
+                                            <ChevronRight size={18} color="#9CA3AF" />
+                                        </TouchableOpacity>
+                                    );
+                                })}
                             </View>
                         </View>
                     )}

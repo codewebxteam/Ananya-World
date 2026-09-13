@@ -52,53 +52,19 @@ import { LOCATION_TASK_NAME, startDutyLocationTracking, stopDutyLocationTracking
 import { registerForPushNotificationsAsync } from '../utils/pushNotifications';
 export { LOCATION_TASK_NAME, startDutyLocationTracking, stopDutyLocationTracking };
 
-TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
-  if (error) {
-    console.error("Background Location Task Error:", error);
-    return;
-  }
-  if (data) {
-    const { locations } = data as { locations: Location.LocationObject[] };
-    if (locations && locations.length > 0) {
-      const location = locations[0];
-      const lat = location.coords.latitude;
-      const lng = location.coords.longitude;
-      
-      try {
-        const storedUser = await AsyncStorage.getItem('userData');
-        if (!storedUser) return;
-        const userData = JSON.parse(storedUser);
-        
-        const todayStr = new Date().toISOString().split('T')[0];
-        const attendanceId = `${userData.empId}_${todayStr}`;
-        const attRef = doc(db, 'attendance', attendanceId);
-
-        let currentAddr = 'Location Shared (BG)';
-        try {
-          const geocode = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
-          if (geocode.length > 0) {
-            const addr = geocode[0];
-            currentAddr = [addr.name, addr.street, addr.city, addr.region].filter(Boolean).join(', ');
-          }
-        } catch {}
-
-        await setDoc(attRef, {
-          staffId: userData.empId,
-          name: userData.name,
-          dept: userData.staffType || userData.department || 'General',
-          avatar: userData.avatar || null,
-          date: todayStr,
-          currentLatitude: lat,
-          currentLongitude: lng,
-          currentLocation: currentAddr,
-          lastLocationUpdate: new Date().toISOString()
-        }, { merge: true });
-      } catch (err) {
-        console.log("Failed to update background location:", err);
-      }
-    }
-  }
-});
+if (Platform.OS === 'android' && Notifications) {
+  Notifications.setNotificationChannelAsync('chat-messages', {
+    name: 'Chat Messages',
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: '#003B95',
+    sound: 'default',
+    enableVibrate: true,
+    showBadge: true,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    bypassDnd: true,
+  }).catch(() => {});
+}
 
 function InnerLayout() {
   const pathname = usePathname();
@@ -201,13 +167,6 @@ function InnerLayout() {
     let isInitialLoad = true;
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
-      // On first load, mark all existing messages as already-seen to avoid old notifications
-      if (isInitialLoad) {
-        snapshot.docs.forEach(d => notifiedMsgIdsRef.current.add(d.id));
-        isInitialLoad = false;
-        return;
-      }
-
       // Ensure currentUserRef is populated
       if (!currentUserRef.current) {
         try {
@@ -219,9 +178,26 @@ function InnerLayout() {
       const user = currentUserRef.current;
       if (!user) return;
 
-      const myEmpId = user.empId || '';
-      const myUid = user.uid || user.id || '';
+      const myEmpId = String(user.empId || '');
+      const myUid = String(user.uid || user.id || '');
       const now = Date.now();
+
+      // On first load, only mark messages older than 25 seconds as already-seen.
+      // Any freshly sent message will be processed and notified immediately!
+      if (isInitialLoad) {
+        snapshot.docs.forEach(d => {
+          const dData = d.data();
+          let mTime = 0;
+          if (dData.createdAt?.toMillis) mTime = dData.createdAt.toMillis();
+          else if (dData.createdAt?.seconds) mTime = dData.createdAt.seconds * 1000;
+          else if (typeof dData.createdAt === 'string') mTime = new Date(dData.createdAt).getTime();
+
+          if (!mTime || (now - mTime) > 25000) {
+            notifiedMsgIdsRef.current.add(d.id);
+          }
+        });
+        isInitialLoad = false;
+      }
 
       snapshot.docChanges().forEach((change) => {
         if (change.type !== 'added') return;
@@ -236,7 +212,7 @@ function InnerLayout() {
         const data = change.doc.data();
 
         // Skip own messages
-        if (data.authorId === myEmpId || data.authorId === myUid) return;
+        if (data.authorId === myEmpId || data.authorId === myUid || data.author === user.name) return;
 
         // Check if message is recent (within 120 seconds)
         let msgTime = now;
@@ -244,11 +220,14 @@ function InnerLayout() {
           msgTime = data.createdAt.toMillis();
         } else if (data.createdAt?.seconds) {
           msgTime = data.createdAt.seconds * 1000;
+        } else if (typeof data.createdAt === 'string') {
+          msgTime = new Date(data.createdAt).getTime();
         }
         if (Math.abs(now - msgTime) > 120000) return;
 
         // Check if current user is a participant
-        const isGroup = data.roomId === 'group';
+        const isGroup = data.roomId === 'group' || !data.roomId;
+        const isCustomGroup = data.isCustomGroup || data.roomId?.startsWith('custom_group_');
         const inRoomId = (myEmpId && data.roomId?.includes(myEmpId)) || (myUid && data.roomId?.includes(myUid));
         const inParticipants = Array.isArray(data.participants) && (
           data.participants.includes(myEmpId) ||
@@ -256,7 +235,7 @@ function InnerLayout() {
           data.participants.includes('all')
         );
 
-        if (!isGroup && !inRoomId && !inParticipants) return;
+        if (!isGroup && !isCustomGroup && !inRoomId && !inParticipants) return;
 
         // Fire local notification with sound and channel
         Notifications.scheduleNotificationAsync({
@@ -265,7 +244,7 @@ function InnerLayout() {
             body: data.text || (data.attachments?.length ? 'Sent an attachment 📎' : 'New message received'),
             sound: 'default',
             priority: 'high',
-            channelId: 'default',
+            channelId: 'chat-messages',
             data: { roomId: data.roomId, type: 'chat' },
           },
           trigger: null,
