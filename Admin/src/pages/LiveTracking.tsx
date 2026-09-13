@@ -6,7 +6,7 @@ import {
   RefreshCcw, Info, ChevronRight, X, Phone, Mail, Award, Clock, AlertTriangle
 } from 'lucide-react';
 import { db } from '../services/firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
 
 declare global {
   interface Window {
@@ -269,6 +269,16 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
 
         // Lookup profile (check both empId and id)
         const profile = staffProfiles.find(p => p.empId === data.staffId || p.id === data.staffId);
+
+        // If staff is deleted from the system or inactive, do not show on live tracking!
+        if (!profile || profile.status === 'Inactive' || profile.status === 'Terminated') {
+          // If staff was deleted, clean up this orphaned attendance record from database
+          if (!profile) {
+            deleteDoc(doc(db, 'attendance', docSnap.id)).catch(() => {});
+          }
+          return;
+        }
+
         const staffType = profile?.staffType || data.dept || 'Field Staff';
         const isOffice = staffType === 'Office Staff' || staffType === 'Office' || staffType === 'Office staff';
         const isField = !isOffice;
