@@ -17,29 +17,42 @@ const sendExpoPushNotification = async (pushToken: string, title: string, body: 
     console.warn('[PushNotification] Invalid push token format:', cleanToken);
     return;
   }
+  const payload = {
+    to: cleanToken,
+    sound: 'default',
+    title: title || 'Ananya World',
+    body: body || 'New Message',
+    data: extraData,
+    priority: 'high',
+    channelId: 'chat-messages',
+    _displayInForeground: true
+  };
+
   try {
-    const res = await fetch('https://exp.host/--/api/v2/push/send', {
+    // 1. Dispatch via text/plain to bypass browser CORS preflight restrictions
+    await fetch('https://exp.host/--/api/v2/push/send', {
       method: 'POST',
+      mode: 'no-cors',
       headers: {
-        'Accept': 'application/json',
-        'Accept-encoding': 'gzip, deflate',
-        'Content-Type': 'application/json',
+        'Content-Type': 'text/plain',
       },
-      body: JSON.stringify({
-        to: cleanToken,
-        sound: 'default',
-        title: title || 'Ananya World',
-        body: body || 'New Message',
-        data: extraData,
-        priority: 'high',
-        channelId: 'chat-messages',
-        _displayInForeground: true
-      }),
+      body: JSON.stringify(payload),
     });
-    const resData = await res.json();
-    console.log('[PushNotification Result]:', resData);
+    console.log('[PushNotification] Successfully dispatched push to Expo for token:', cleanToken);
   } catch (e) {
-    console.error('Push notification error:', e);
+    // 2. Fallback attempt with standard JSON
+    try {
+      await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      console.log('[PushNotification Fallback] Dispatched to Expo for token:', cleanToken);
+    } catch (err2) {
+      console.error('Push notification error:', err2);
+    }
   }
 };
 
