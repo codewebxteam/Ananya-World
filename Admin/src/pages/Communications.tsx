@@ -578,7 +578,11 @@ export default function Communications({ branchesList = [], profileData, setShow
           let token = '';
 
           if (targetId) {
-            const targetStaff = staffList.find(s => s.empId === targetId || s.id === targetId || s.uid === targetId);
+            const targetStaff = staffList.find(s => 
+              (s.empId && s.empId.toLowerCase() === targetId.toLowerCase()) || 
+              (s.id && s.id.toLowerCase() === targetId.toLowerCase()) || 
+              (s.uid && s.uid.toLowerCase() === targetId.toLowerCase())
+            );
             token = targetStaff?.pushToken || '';
 
             if (!token) {
@@ -611,18 +615,27 @@ export default function Communications({ branchesList = [], profileData, setShow
             }
           });
 
-          // Also check users collection to ensure any newly registered tokens are included
+          // Also check all documents in users and staff collections to ensure 100% token coverage
           try {
-            const qUsers = query(collection(db, 'users'), where('role', '==', 'staff'));
-            const uSnap = await getDocs(qUsers);
+            const uSnap = await getDocs(collection(db, 'users'));
             uSnap.forEach(d => {
-              const t = d.data().pushToken;
+              const t = d.data()?.pushToken;
               if (t && !sentTokens.has(t)) {
                 sentTokens.add(t);
                 sendExpoPushNotification(t, 'Ananya World', msgText || '[Attachment]', { type: 'chat' });
               }
             });
-          } catch {}
+            const sSnap = await getDocs(collection(db, 'staff'));
+            sSnap.forEach(d => {
+              const t = d.data()?.pushToken;
+              if (t && !sentTokens.has(t)) {
+                sentTokens.add(t);
+                sendExpoPushNotification(t, 'Ananya World', msgText || '[Attachment]', { type: 'chat' });
+              }
+            });
+          } catch (err) {
+            console.error('Error broadcasting tokens:', err);
+          }
         }
       } catch (pErr) {
         console.error("Error sending message push notification:", pErr);

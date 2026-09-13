@@ -282,17 +282,20 @@ export default function ChatScreen() {
                         msgTime = data.createdAt.seconds * 1000;
                     }
                     
-                    const isRecent = Math.abs(now - msgTime) < 20000;
-                    const storedEmpId = globalChatCache.userData?.empId || userData?.empId;
-                    const isOtherUser = data.authorId !== storedEmpId && data.author !== (globalChatCache.userData?.name || userData?.name);
+                    const isRecent = Math.abs(now - msgTime) < 120000;
+                    const storedUser = globalChatCache.userData || userData;
+                    const storedEmpId = storedUser?.empId || storedUser?.uid;
+                    const storedName = storedUser?.name;
+                    const isOtherUser = (!storedEmpId || data.authorId !== storedEmpId) && (!storedName || data.author !== storedName);
 
                     // Check if current user is a participant of this message
                     const isParticipant = data.roomId === 'group' || 
                         !data.roomId ||
                         data.roomId?.startsWith('custom_group_') ||
                         (storedEmpId && data.roomId?.includes(storedEmpId)) ||
+                        (storedUser?.uid && data.roomId?.includes(storedUser.uid)) ||
                         (data.participants && Array.isArray(data.participants) && 
-                         (data.participants.includes(storedEmpId) || data.participants.includes('all')));
+                         (data.participants.includes(storedEmpId) || (storedUser?.uid && data.participants.includes(storedUser.uid)) || data.participants.includes('all')));
 
                     // Check if the chat room is NOT currently open
                     const isRoomNotOpen = activeRoomIdRef.current !== data.roomId;
