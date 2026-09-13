@@ -1,0 +1,15 @@
+# EAS Build ignore file
+# When this file exists, EAS uses it instead of .gitignore for packaging.
+# google-services.json is deliberately NOT in this file so EAS can upload it to the build server,
+# while .gitignore ensures google-services.json is NEVER pushed to GitHub.
+
+node_modules/
+.expo/
+dist/
+web-build/
+.kotlin/
+.DS_Store
+*.tsbuildinfo
+npm-debug.*
+yarn-debug.*
+yarn-error.*

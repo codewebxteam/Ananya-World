@@ -1,0 +1,9 @@
+node_modules/
+.expo/
+dist/
+build/
+.DS_Store
+*.tsbuildinfo
+npm-debug.*
+yarn-debug.*
+yarn-error.*
