@@ -260,7 +260,7 @@ export const startDutyLocationTracking = async (promptSettings: boolean = true, 
       activityType: Location.ActivityType.Other,
       foregroundService: {
         notificationTitle: "Ananya World",
-        notificationBody: "Ananya World",
+        notificationBody: "Welcome to Ananya World",
         notificationColor: "#003B95",
         killServiceOnDestroy: false,
       },
