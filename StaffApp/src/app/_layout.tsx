@@ -48,7 +48,7 @@ if (!isExpoGo) {
   }
 }
 
-import { LOCATION_TASK_NAME, startDutyLocationTracking, stopDutyLocationTracking } from '../utils/locationTracking';
+import { LOCATION_TASK_NAME, startDutyLocationTracking, stopDutyLocationTracking, recordLocationToFirestore } from '../utils/locationTracking';
 import { registerForPushNotificationsAsync } from '../utils/pushNotifications';
 export { LOCATION_TASK_NAME, startDutyLocationTracking, stopDutyLocationTracking };
 
@@ -130,6 +130,30 @@ function InnerLayout() {
     }
     resumeTrackingIfActive(true);
 
+    // Run active foreground location ping every 30s while user has the app open
+    const fgLocationInterval = setInterval(async () => {
+      try {
+        const storedUser = await AsyncStorage.getItem('userData');
+        if (!storedUser) return;
+        const user = JSON.parse(storedUser);
+        if (user.status === 'Inactive' || user.status === 'Pending') return;
+
+        const isField = (user.staffType || user.department || '').includes('Field');
+        const today = new Date().toISOString().split('T')[0];
+        const cachedIn = await AsyncStorage.getItem(`punchIn_${today}`);
+        const cachedOut = await AsyncStorage.getItem(`punchOut_${today}`);
+
+        if (isField || (cachedIn && !cachedOut)) {
+          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          if (loc?.coords) {
+            await recordLocationToFirestore(loc.coords.latitude, loc.coords.longitude, user);
+          }
+        }
+      } catch (e) {
+        // Foreground ping error non-fatal
+      }
+    }, 30000);
+
     // Listen for AppState changes (e.g. when user returns from Settings after granting 'Allow all the time')
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active') {
@@ -138,6 +162,7 @@ function InnerLayout() {
     });
 
     return () => {
+      clearInterval(fgLocationInterval);
       subscription.remove();
     };
   }, []);

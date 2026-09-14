@@ -43,6 +43,79 @@ if (!isExpoGo) {
   }
 }
 
+/**
+ * Helper: Records location coordinates and timestamp to Firestore
+ */
+export const recordLocationToFirestore = async (lat: number, lng: number, userData: any) => {
+  if (!userData || !lat || !lng) return;
+
+  try {
+    const isField = (userData.staffType || userData.department || '').includes('Field');
+    const todayStr = new Date().toISOString().split('T')[0];
+    const attendanceId = `${userData.empId}_${todayStr}`;
+    const attRef = doc(db, 'attendance', attendanceId);
+
+    let currentAddr = 'Location Shared (BG)';
+    try {
+      const geocodePromise = Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 1500));
+      const geocode: any = await Promise.race([geocodePromise, timeoutPromise]);
+      if (Array.isArray(geocode) && geocode.length > 0) {
+        const addr = geocode[0];
+        currentAddr = [addr.name, addr.street, addr.city, addr.region].filter(Boolean).join(', ');
+      }
+    } catch {}
+
+    const nowIso = new Date().toISOString();
+    const attPayload: any = {
+      staffId: userData.empId,
+      name: userData.name,
+      dept: userData.staffType || userData.department || 'Field Staff',
+      avatar: userData.avatar || null,
+      date: todayStr,
+      currentLatitude: lat,
+      currentLongitude: lng,
+      currentLocation: currentAddr,
+      lastLocationUpdate: nowIso,
+    };
+
+    // Field staff is 24/7 continuous duty: ensure punchIn is active and punchOut is null
+    if (isField) {
+      attPayload.status = 'Present';
+      attPayload.punchOut = null;
+      
+      // Only set punchIn once when duty begins today; preserve it across 30s pings so Duration accumulates!
+      const cachedPunchInKey = `punchIn_${todayStr}`;
+      let existingPunchIn = await AsyncStorage.getItem(cachedPunchInKey);
+      if (!existingPunchIn) {
+        existingPunchIn = nowIso;
+        await AsyncStorage.setItem(cachedPunchInKey, existingPunchIn);
+      }
+      attPayload.punchIn = existingPunchIn;
+    }
+
+    // Write directly to attendance document
+    await setDoc(attRef, attPayload, { merge: true });
+
+    // Also mirror real-time coordinates to user profile for instant admin tracking
+    const userLocPayload = {
+      currentLatitude: lat,
+      currentLongitude: lng,
+      currentLocation: currentAddr,
+      lastLocationUpdate: nowIso,
+    };
+    if (userData.uid) {
+      updateDoc(doc(db, 'users', userData.uid), userLocPayload).catch(() => {});
+    }
+    if (userData.empId) {
+      updateDoc(doc(db, 'users', userData.empId), userLocPayload).catch(() => {});
+      updateDoc(doc(db, 'staff', userData.empId), userLocPayload).catch(() => {});
+    }
+  } catch (err) {
+    console.error('[LocationTracking] Error recording location to Firestore:', err);
+  }
+};
+
 // Define the background location task if not already defined
 try {
   if (!TaskManager.isTaskDefined(LOCATION_TASK_NAME)) {
@@ -62,139 +135,9 @@ try {
             const storedUser = await AsyncStorage.getItem('userData');
             if (!storedUser) return;
             const userData = JSON.parse(storedUser);
-            
-            const isField = (userData.staffType || userData.department || '').includes('Field');
-            const todayStr = new Date().toISOString().split('T')[0];
-            const attendanceId = `${userData.empId}_${todayStr}`;
-            const attRef = doc(db, 'attendance', attendanceId);
-
-            let currentAddr = 'Location Shared (BG)';
-            try {
-              const geocode = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
-              if (geocode.length > 0) {
-                const addr = geocode[0];
-                currentAddr = [addr.name, addr.street, addr.city, addr.region].filter(Boolean).join(', ');
-              }
-            } catch {}
-
-            const nowIso = new Date().toISOString();
-            const attPayload: any = {
-              staffId: userData.empId,
-              name: userData.name,
-              dept: userData.staffType || userData.department || 'Field Staff',
-              avatar: userData.avatar || null,
-              date: todayStr,
-              currentLatitude: lat,
-              currentLongitude: lng,
-              currentLocation: currentAddr,
-              lastLocationUpdate: nowIso,
-            };
-
-            // Field staff is 24/7 continuous duty: ensure punchIn is active and punchOut is null
-            if (isField) {
-              attPayload.status = 'Present';
-              attPayload.punchOut = null;
-              
-              // Only set punchIn once when duty begins today; preserve it across 30s pings so Duration accumulates!
-              const cachedPunchInKey = `punchIn_${todayStr}`;
-              let existingPunchIn = await AsyncStorage.getItem(cachedPunchInKey);
-              if (!existingPunchIn) {
-                existingPunchIn = nowIso;
-                await AsyncStorage.setItem(cachedPunchInKey, existingPunchIn);
-              }
-              attPayload.punchIn = existingPunchIn;
-            }
-
-            await setDoc(attRef, attPayload, { merge: true });
-
-            // Also mirror real-time coordinates to user profile for instant admin tracking
-            const userLocPayload = {
-              currentLatitude: lat,
-              currentLongitude: lng,
-              currentLocation: currentAddr,
-              lastLocationUpdate: nowIso,
-            };
-            if (userData.uid) {
-              await updateDoc(doc(db, 'users', userData.uid), userLocPayload).catch(() => {});
-            }
-            if (userData.empId) {
-              await updateDoc(doc(db, 'users', userData.empId), userLocPayload).catch(() => {});
-              await updateDoc(doc(db, 'staff', userData.empId), userLocPayload).catch(() => {});
-            }
-
-            // --- Real-time Background Chat Message Checker ---
-            // Checks for new messages in Firestore while app is backgrounded with Foreground Service
-            try {
-              const qRecentMsgs = query(
-                collection(db, 'communications'),
-                orderBy('createdAt', 'desc'),
-                limit(5)
-              );
-              const msgsSnap = await getDocs(qRecentMsgs);
-              const notifiedRaw = await AsyncStorage.getItem('notified_chat_msg_ids');
-              const notifiedMsgIds = new Set<string>(notifiedRaw ? JSON.parse(notifiedRaw) : []);
-              const myEmpId = String(userData.empId || '');
-              const myUid = String(userData.uid || userData.id || '');
-              const nowTime = Date.now();
-
-              for (const mDoc of msgsSnap.docs) {
-                const mId = mDoc.id;
-                if (notifiedMsgIds.has(mId)) continue;
-
-                const mData = mDoc.data();
-                // Skip if author is current user
-                if (mData.authorId === myEmpId || mData.authorId === myUid) {
-                  notifiedMsgIds.add(mId);
-                  continue;
-                }
-
-                // Check message time (within last 120 seconds)
-                let mTime = nowTime;
-                if (mData.createdAt?.toMillis) mTime = mData.createdAt.toMillis();
-                else if (mData.createdAt?.seconds) mTime = mData.createdAt.seconds * 1000;
-                else if (typeof mData.createdAt === 'string') mTime = new Date(mData.createdAt).getTime();
-
-                if (Math.abs(nowTime - mTime) > 120000) {
-                  notifiedMsgIds.add(mId);
-                  continue;
-                }
-
-                // Check recipient relevance (group, custom group, or direct chat)
-                const isGroup = mData.roomId === 'group';
-                const isCustomGroup = mData.isCustomGroup || mData.roomId?.startsWith('custom_group_');
-                const isDirect = (myEmpId && mData.roomId?.includes(myEmpId)) || (myUid && mData.roomId?.includes(myUid));
-                const inParts = Array.isArray(mData.participants) && (
-                  mData.participants.includes(myEmpId) ||
-                  mData.participants.includes(myUid) ||
-                  mData.participants.includes('all')
-                );
-
-                if (isGroup || isCustomGroup || isDirect || inParts) {
-                  notifiedMsgIds.add(mId);
-                  if (Notifications) {
-                    await Notifications.scheduleNotificationAsync({
-                      content: {
-                        title: mData.author ? `${mData.author}` : 'Ananya World',
-                        body: mData.text || (mData.attachments?.length ? 'Sent an attachment 📎' : 'New message received'),
-                        sound: 'default',
-                        priority: 'high',
-                        channelId: 'chat-messages',
-                        data: { roomId: mData.roomId, type: 'chat' },
-                      },
-                      trigger: null,
-                    }).catch(() => {});
-                  }
-                }
-              }
-
-              // Keep set trimmed to last 60 entries
-              const trimmedIds = Array.from(notifiedMsgIds).slice(-60);
-              await AsyncStorage.setItem('notified_chat_msg_ids', JSON.stringify(trimmedIds));
-            } catch (bgMsgErr) {
-              console.log('[LocationTask] Background chat check error:', bgMsgErr);
-            }
+            await recordLocationToFirestore(lat, lng, userData);
           } catch (err) {
-            console.log("[LocationTask] Failed to update background location:", err);
+            console.error('[LocationTask] Failed to process location payload:', err);
           }
         }
       }
@@ -309,11 +252,9 @@ export const startDutyLocationTracking = async (promptSettings: boolean = true, 
 
     // Start location updates with foreground service (sticky notification)
     await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-      accuracy: Location.Accuracy.High,
+      accuracy: Location.Accuracy.Balanced,
       timeInterval: 30000, // Exactly 30 seconds interval as requested
       distanceInterval: 0,
-      deferredUpdatesInterval: 30000,
-      deferredUpdatesDistance: 0,
       showsBackgroundLocationIndicator: true,
       pausesUpdatesAutomatically: false,
       activityType: Location.ActivityType.Other,
