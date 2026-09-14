@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../services/firebase';
+import VerifiedLocationBadge from './VerifiedLocationBadge';
 
 interface StaffDetailsModalProps {
   isOpen: boolean;
@@ -594,7 +595,15 @@ export default function StaffDetailsModal({ isOpen, onClose, staff, onEdit, onRe
                           <td className="py-3.5 px-4 text-xs text-gray-700 font-semibold">{punchInTime}</td>
                           <td className="py-3.5 px-4 text-xs text-gray-700 font-semibold">{punchOutTime}</td>
                           <td className="py-3.5 px-4 text-xs text-gray-800 font-bold">{log.hours || '--:--'}</td>
-                          <td className="py-3.5 px-4 text-xs text-gray-500 max-w-[250px] truncate" title={log.locationIn}>{log.locationIn || 'N/A'}</td>
+                          <td className="py-3.5 px-4 text-xs text-gray-500">
+                            <VerifiedLocationBadge
+                              location={log.currentLocation || log.locationIn}
+                              lat={Number(log.currentLatitude || log.latitudeIn || 0)}
+                              lng={Number(log.currentLongitude || log.longitudeIn || 0)}
+                              docId={log.id}
+                              truncateClass="max-w-[220px] truncate"
+                            />
+                          </td>
                         </tr>
                       );
                     })}

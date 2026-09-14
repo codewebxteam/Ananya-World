@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
 import { db } from '../services/firebase';
+import VerifiedLocationBadge from '../components/VerifiedLocationBadge';
 
 interface DashboardProps {
   staffList?: any[];
@@ -100,6 +101,7 @@ export default function Dashboard({ staffList = [], setActiveTab, branchesList =
             const s = staffList.find(staff => staff.empId === a.staffId || staff.id === a.staffId);
             return {
               id: a.id,
+              docId: a.id,
               name: a.name || s?.name || 'Unknown',
               empId: a.staffId || s?.empId || 'N/A',
               department: s?.department || s?.staffType || a.dept || 'N/A',
@@ -108,7 +110,9 @@ export default function Dashboard({ staffList = [], setActiveTab, branchesList =
               statusText: 'Present',
               statusColor: 'bg-green-100 text-green-800',
               timeInfo: a.punchIn ? `Punched In: ${new Date(a.punchIn).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}` : 'N/A',
-              location: a.locationIn
+              location: a.locationIn,
+              lat: Number(a.latitudeIn || a.currentLatitude || 0),
+              lng: Number(a.longitudeIn || a.currentLongitude || 0)
             };
           });
       case 'field':
@@ -121,6 +125,7 @@ export default function Dashboard({ staffList = [], setActiveTab, branchesList =
             const s = staffList.find(staff => staff.empId === a.staffId || staff.id === a.staffId);
             return {
               id: a.id,
+              docId: a.id,
               name: a.name || s?.name || 'Unknown',
               empId: a.staffId || s?.empId || 'N/A',
               department: s?.department || s?.staffType || a.dept || 'Field Staff',
@@ -129,12 +134,15 @@ export default function Dashboard({ staffList = [], setActiveTab, branchesList =
               statusText: 'On Field Duty',
               statusColor: 'bg-orange-100 text-orange-800',
               timeInfo: a.punchIn ? `Active since: ${new Date(a.punchIn).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}` : 'N/A',
-              location: a.currentLocation || a.locationIn
+              location: a.currentLocation || a.locationIn,
+              lat: Number(a.currentLatitude || a.latitudeIn || 0),
+              lng: Number(a.currentLongitude || a.longitudeIn || 0)
             };
           });
       case 'absent':
         return absentStaffDetails.map(s => ({
           id: s.id,
+          docId: s.id,
           name: s.name,
           empId: s.empId,
           department: s.department || s.staffType || 'N/A',
@@ -151,6 +159,7 @@ export default function Dashboard({ staffList = [], setActiveTab, branchesList =
             const s = staffList.find(staff => staff.empId === a.staffId || staff.id === a.staffId);
             return {
               id: a.id,
+              docId: a.id,
               name: a.name || s?.name || 'Unknown',
               empId: a.staffId || s?.empId || 'N/A',
               department: s?.department || s?.staffType || a.dept || 'N/A',
@@ -159,7 +168,9 @@ export default function Dashboard({ staffList = [], setActiveTab, branchesList =
               statusText: `Late (${a.lateMinutes || 0}m)`,
               statusColor: 'bg-yellow-100 text-yellow-800',
               timeInfo: a.punchIn ? `Punched In: ${new Date(a.punchIn).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}` : 'N/A',
-              location: a.locationIn
+              location: a.locationIn,
+              lat: Number(a.latitudeIn || a.currentLatitude || 0),
+              lng: Number(a.longitudeIn || a.currentLongitude || 0)
             };
           });
       default:
@@ -385,10 +396,12 @@ export default function Dashboard({ staffList = [], setActiveTab, branchesList =
                       <td className="py-3.5 px-4 text-xs font-semibold text-gray-700">{staff.timeInfo}</td>
                       {staff.location !== undefined ? (
                         <td className="py-3.5 px-4">
-                          <div className="flex items-center gap-1.5 text-xs text-gray-500 max-w-[200px] truncate" title={staff.location || 'Unknown'}>
-                            <MapPin size={12} className="text-gray-400 shrink-0" />
-                            <span>{staff.location || 'Unknown'}</span>
-                          </div>
+                          <VerifiedLocationBadge
+                            location={staff.location}
+                            lat={staff.lat}
+                            lng={staff.lng}
+                            docId={staff.docId}
+                          />
                         </td>
                       ) : (activeDetailType === 'field' || activeDetailType === 'present' || activeDetailType === 'late' ? (
                         <td className="py-3.5 px-4 text-xs text-gray-400">Location not available</td>

@@ -3,10 +3,16 @@ import {
   Users, MapPin, 
   Search, Filter, 
   WifiOff, Activity, LocateFixed, Plus, Minus,
-  RefreshCcw, Info, ChevronRight, X, Phone, Mail, Award, Clock, AlertTriangle
+  RefreshCcw, Info, ChevronRight, X, Phone, Mail, Award, Clock, AlertTriangle, ExternalLink
 } from 'lucide-react';
 import { db } from '../services/firebase';
 import { collection, query, where, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
+import { 
+  isPlaceholderLocation, 
+  reverseGeocode, 
+  getCachedAddress, 
+  syncResolvedAddressToFirestore 
+} from '../services/geocodeService';
 
 declare global {
   interface Window {
@@ -28,6 +34,9 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
   const [selectedStaffDetail, setSelectedStaffDetail] = useState<any | null>(null);
   const [countdown, setCountdown] = useState(30);
   const [previewAvatar, setPreviewAvatar] = useState<{ url: string; name: string } | null>(null);
+  const [modalAddressLoading, setModalAddressLoading] = useState(false);
+  const [modalResolvedAddress, setModalResolvedAddress] = useState<string>('');
+  const [copiedAddress, setCopiedAddress] = useState(false);
 
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
@@ -95,6 +104,76 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
       };
     } catch {
       return { isStale: false, diffMins: 0, timeAgoStr: '0m', warningMessage: '' };
+    }
+  };
+
+  // Synchronize and resolve physical address for modal details
+  useEffect(() => {
+    if (!selectedStaffDetail) {
+      setModalResolvedAddress('');
+      setModalAddressLoading(false);
+      return;
+    }
+
+    const lat = selectedStaffDetail.lat;
+    const lng = selectedStaffDetail.lng;
+    const loc = selectedStaffDetail.location;
+
+    // If already has a real physical address that isn't a placeholder, use it
+    if (!isPlaceholderLocation(loc)) {
+      setModalResolvedAddress(loc);
+      setModalAddressLoading(false);
+      return;
+    }
+
+    if (lat && lng) {
+      const cached = getCachedAddress(lat, lng);
+      if (cached) {
+        setModalResolvedAddress(cached);
+        setModalAddressLoading(false);
+        return;
+      }
+
+      setModalAddressLoading(true);
+      reverseGeocode(lat, lng)
+        .then(resolved => {
+          setModalResolvedAddress(resolved);
+          setModalAddressLoading(false);
+          // Update selectedStaffDetail in place
+          setSelectedStaffDetail((prev: any) => prev ? { ...prev, location: resolved } : null);
+          // Also sync to attendance document if available
+          const docId = selectedStaffDetail.fullDocId || selectedStaffDetail.id;
+          if (docId) {
+            syncResolvedAddressToFirestore(docId, resolved);
+          }
+        })
+        .catch(() => {
+          setModalResolvedAddress(`${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+          setModalAddressLoading(false);
+        });
+    } else {
+      setModalResolvedAddress(loc || 'Unknown Location Coordinates');
+      setModalAddressLoading(false);
+    }
+  }, [selectedStaffDetail?.id, selectedStaffDetail?.lat, selectedStaffDetail?.lng]);
+
+  const handleRefreshModalAddress = async () => {
+    if (!selectedStaffDetail?.lat || !selectedStaffDetail?.lng) return;
+    setModalAddressLoading(true);
+    try {
+      const resolved = await reverseGeocode(selectedStaffDetail.lat, selectedStaffDetail.lng);
+      setModalResolvedAddress(resolved);
+      setSelectedStaffDetail((prev: any) => prev ? { ...prev, location: resolved } : null);
+      setStaffOnMap(prev => prev.map(s => s.staffId === selectedStaffDetail.staffId ? { ...s, location: resolved } : s));
+      setRecentStaffData(prev => prev.map(s => s.staffId === selectedStaffDetail.staffId ? { ...s, location: resolved } : s));
+      const docId = selectedStaffDetail.fullDocId || selectedStaffDetail.id;
+      if (docId) {
+        syncResolvedAddressToFirestore(docId, resolved);
+      }
+    } catch {
+      // Ignored
+    } finally {
+      setModalAddressLoading(false);
     }
   };
   const activeStaffOnMap = staffOnMap.filter(s => {
@@ -176,7 +255,11 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
               </div>
             </div>
             <p style="margin: 0 0 4px; font-size: 11px; color: #334155;"><strong>Punch In:</strong> ${staff.time} (${getElapsedDuration(staff.punchInTime)})</p>
-            <p style="margin: 0 0 6px; font-size: 11px; color: #64748B; max-width: 220px; line-height: 1.4;">${staff.location}</p>
+            <p style="margin: 0 0 6px; font-size: 11px; color: #64748B; max-width: 220px; line-height: 1.4;">${
+              isPlaceholderLocation(staff.location)
+                ? (getCachedAddress(staff.lat, staff.lng) || staff.location || 'Resolving address...')
+                : staff.location
+            }</p>
             ${staleInfo.isStale ? `
               <div style="padding: 6px 8px; background: #FFFBEB; border: 1px solid #FCD34D; border-radius: 6px; font-size: 10px; color: #92400E; font-weight: 600; line-height: 1.3;">
                 ⚠️ Not Received Location from ${staleInfo.timeAgoStr}. Please inform staff to turn on internet connection or open the app & keep it in background.
@@ -300,16 +383,39 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
         const bId = profile?.branchId || data.branchId || '';
         const displayName = isOffice ? `${data.name || 'Unknown'} (Office Staff)` : (data.name || 'Unknown');
 
-        if (isActiveDuty && (data.currentLatitude || data.latitudeIn) && (data.currentLongitude || data.longitudeIn)) {
+        const lat = Number(data.currentLatitude || data.latitudeIn || 0);
+        const lng = Number(data.currentLongitude || data.longitudeIn || 0);
+        const rawLoc = data.currentLocation || data.locationIn || '';
+        
+        let initialLoc = rawLoc;
+        if (lat && lng && isPlaceholderLocation(rawLoc)) {
+          const cached = getCachedAddress(lat, lng);
+          if (cached) {
+            initialLoc = cached;
+            syncResolvedAddressToFirestore(docSnap.id, cached);
+          } else {
+            initialLoc = 'Resolving address...';
+            reverseGeocode(lat, lng).then(resolved => {
+              if (resolved && !isPlaceholderLocation(resolved)) {
+                setStaffOnMap(prev => prev.map(s => s.staffId === data.staffId ? { ...s, location: resolved } : s));
+                setRecentStaffData(prev => prev.map(s => s.staffId === data.staffId ? { ...s, location: resolved } : s));
+                syncResolvedAddressToFirestore(docSnap.id, resolved);
+              }
+            });
+          }
+        }
+
+        if (isActiveDuty && lat && lng) {
           const activeItem = {
             id: docSnap.id,
+            fullDocId: docSnap.id,
             staffId: data.staffId,
             name: displayName,
             role: staffType,
             avatar: data.avatar || null,
-            lat: Number(data.currentLatitude || data.latitudeIn),
-            lng: Number(data.currentLongitude || data.longitudeIn),
-            location: data.currentLocation || data.locationIn || 'Unknown Location',
+            lat,
+            lng,
+            location: initialLoc || 'Unknown Location',
             time: isField ? '24/7 Live' : formattedTime,
             punchInTime: data.punchIn || profile?.createdAt || null,
             lastLocationUpdate: data.lastLocationUpdate || data.punchIn || null,
@@ -329,12 +435,35 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
           }
         }
 
+        const recentLat = Number(data.currentLatitude || data.latitudeIn || data.latitudeOut || 0);
+        const recentLng = Number(data.currentLongitude || data.longitudeIn || data.longitudeOut || 0);
+        const rawRecentLoc = isActiveDuty ? (data.currentLocation || data.locationIn || '') : (data.locationOut || '');
+        let initialRecentLoc = rawRecentLoc;
+        if (recentLat && recentLng && isPlaceholderLocation(rawRecentLoc)) {
+          const cachedRecent = getCachedAddress(recentLat, recentLng);
+          if (cachedRecent) {
+            initialRecentLoc = cachedRecent;
+            syncResolvedAddressToFirestore(docSnap.id, cachedRecent);
+          } else {
+            initialRecentLoc = 'Resolving address...';
+            reverseGeocode(recentLat, recentLng).then(resolved => {
+              if (resolved && !isPlaceholderLocation(resolved)) {
+                setRecentStaffData(prev => prev.map(s => s.staffId === data.staffId ? { ...s, location: resolved } : s));
+                syncResolvedAddressToFirestore(docSnap.id, resolved);
+              }
+            });
+          }
+        }
+
         const recentItem = {
           id: docSnap.id.substring(0, 8),
+          fullDocId: docSnap.id,
           staffId: data.staffId,
           name: displayName,
           avatar: data.avatar || null,
-          location: isActiveDuty ? (data.currentLocation || data.locationIn || 'Not Set') : (data.locationOut || 'Not Set'),
+          lat: recentLat,
+          lng: recentLng,
+          location: initialRecentLoc || (isActiveDuty ? 'Not Set' : 'Offline'),
           updated: isActiveDuty ? (isField ? 'Live Tracking 24/7' : `Punched In at ${formattedTime}`) : (data.punchOut ? `Punched Out at ${new Date(data.punchOut).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}` : 'N/A'),
           battery: Math.floor(Math.random() * (98 - 72 + 1)) + 72,
           batColor: 'bg-green-500',
@@ -927,12 +1056,66 @@ export default function LiveTracking({ branchesList = [] }: LiveTrackingProps) {
 
               {/* Verified Location */}
               <div className="space-y-2">
-                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Current Verified Address</h4>
-                <div className="bg-blue-50/30 border border-blue-100/50 rounded-2xl p-4 flex gap-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Current Verified Address</h4>
+                  {selectedStaffDetail.lat && selectedStaffDetail.lng ? (
+                    <a
+                      href={`https://www.google.com/maps?q=${selectedStaffDetail.lat},${selectedStaffDetail.lng}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 hover:underline"
+                    >
+                      <span>Open in Maps</span>
+                      <ExternalLink size={12} />
+                    </a>
+                  ) : null}
+                </div>
+                <div className="bg-gradient-to-br from-blue-50/60 to-indigo-50/40 border border-blue-100 rounded-2xl p-4 flex gap-3 items-start shadow-sm">
                   <MapPin className="text-blue-600 shrink-0 mt-0.5 animate-bounce" size={20} />
-                  <p className="text-gray-700 text-xs leading-relaxed font-medium">
-                    {selectedStaffDetail.location || 'Unknown Location Coordinates'}
-                  </p>
+                  <div className="flex-1 space-y-1.5">
+                    {modalAddressLoading ? (
+                      <div className="flex items-center gap-2 text-blue-600 text-xs font-medium py-1">
+                        <RefreshCcw size={14} className="animate-spin text-blue-600" />
+                        <span>Resolving exact address from GPS coordinates...</span>
+                      </div>
+                    ) : (
+                      <p className="text-gray-900 text-xs leading-relaxed font-semibold">
+                        {modalResolvedAddress || selectedStaffDetail.location || 'Unknown Location Coordinates'}
+                      </p>
+                    )}
+                    {selectedStaffDetail.lat && selectedStaffDetail.lng && (
+                      <div className="flex items-center justify-between pt-1.5 border-t border-blue-100/60 text-[10px] text-gray-500">
+                        <span className="font-mono font-medium">
+                          GPS: {selectedStaffDetail.lat.toFixed(5)}, {selectedStaffDetail.lng.toFixed(5)}
+                        </span>
+                        <div className="flex items-center gap-2 font-medium">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const textToCopy = modalResolvedAddress || `${selectedStaffDetail.lat}, ${selectedStaffDetail.lng}`;
+                              navigator.clipboard?.writeText(textToCopy);
+                              setCopiedAddress(true);
+                              setTimeout(() => setCopiedAddress(false), 2000);
+                            }}
+                            className="text-blue-600 hover:text-blue-800 font-bold transition-colors cursor-pointer"
+                          >
+                            {copiedAddress ? '✓ Copied' : 'Copy Address'}
+                          </button>
+                          <span className="text-gray-300">•</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRefreshModalAddress()}
+                            disabled={modalAddressLoading}
+                            className="text-gray-500 hover:text-blue-600 transition-colors flex items-center gap-0.5 cursor-pointer disabled:opacity-50"
+                            title="Re-fetch verified address"
+                          >
+                            <RefreshCcw size={10} className={modalAddressLoading ? 'animate-spin' : ''} />
+                            <span>Refresh</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 

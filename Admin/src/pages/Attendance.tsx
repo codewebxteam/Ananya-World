@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { collection, query, onSnapshot, doc, updateDoc, where, getDocs, serverTimestamp } from 'firebase/firestore';
 import { db } from '../services/firebase';
+import VerifiedLocationBadge from '../components/VerifiedLocationBadge';
 
 interface AttendanceProps {
   selectedBranchId?: string;
@@ -459,9 +460,14 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
                     </td>
                     <td className="py-3 px-4 text-sm text-gray-600 font-medium">{log.hours || '-'}</td>
                     <td className="py-3 px-4">{renderStatus(log.status, log.forgiven)}</td>
-                    <td className="py-3 px-4 text-sm text-gray-600 flex items-center gap-1 mt-1">
-                      {log.locationIn && <MapPinIcon size={14} className="text-gray-400" />}
-                      {log.locationIn || '-'}
+                    <td className="py-3 px-4 text-sm text-gray-600">
+                      <VerifiedLocationBadge
+                        location={log.currentLocation || log.locationIn}
+                        lat={Number(log.currentLatitude || log.latitudeIn || 0)}
+                        lng={Number(log.currentLongitude || log.longitudeIn || 0)}
+                        docId={log.id}
+                        truncateClass="max-w-[180px] truncate"
+                      />
                     </td>
                     <td className="py-3 px-4 text-center">
                       <div className="flex items-center justify-center gap-2">
