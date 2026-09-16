@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { 
   Users, MapPin, ChevronDown,
   Calendar, Clock, CalendarCheck2, CalendarX2, 
-  Plane, Search, Download, Eye, MoreVertical, MapPin as MapPinIcon
+  Plane, Search, Download, Eye, MoreVertical, MapPin as MapPinIcon,
+  CalendarDays, Filter, X, CheckCircle2, AlertTriangle, Undo2
 } from 'lucide-react';
 import { collection, query, onSnapshot, doc, updateDoc, where, getDocs, serverTimestamp } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -17,6 +18,12 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
   const [attendanceData, setAttendanceData] = useState<any[]>([]);
   const [staffList, setStaffList] = useState<any[]>([]);
   const [forgivingId, setForgivingId] = useState<string | null>(null);
+
+  // Filter states for full month and staff history
+  const [searchQuery, setSearchQuery] = useState('');
+  const [staffFilter, setStaffFilter] = useState('all');
+  const [monthFilter, setMonthFilter] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`);
+  const [statusFilter, setStatusFilter] = useState('all');
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
@@ -95,7 +102,7 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
         logs.push({ id: doc.id, ...doc.data() });
       });
       // Sort descending by date, then punchIn
-      logs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime() || new Date(b.punchIn).getTime() - new Date(a.punchIn).getTime());
+      logs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime() || new Date(b.punchIn || 0).getTime() - new Date(a.punchIn || 0).getTime());
       setAttendanceData(logs);
     });
 
@@ -107,29 +114,29 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedBranchId]);
+  }, [selectedBranchId, staffFilter, monthFilter, statusFilter, searchQuery]);
 
   const effectiveStaffList = propStaffList && propStaffList.length > 0 
     ? (selectedBranchId !== 'all' ? propStaffList.filter(s => s.branchId === selectedBranchId) : propStaffList)
     : (selectedBranchId !== 'all' ? staffList.filter(s => s.branchId === selectedBranchId) : staffList);
 
   const branchEmpIds = new Set(
-    effectiveStaffList.flatMap(s => [s.empId, s.id, s.uid]).filter(Boolean)
+    effectiveStaffList.flatMap(s => [s.empId, s.id, s.uid, s.employeeId]).filter(Boolean)
   );
 
-  const filteredAttendance = selectedBranchId && selectedBranchId !== 'all'
+  const branchAttendance = selectedBranchId && selectedBranchId !== 'all'
     ? attendanceData.filter(log => branchEmpIds.has(log.staffId) || log.branchId === selectedBranchId)
     : attendanceData;
 
   const todayStr = new Date().toISOString().split('T')[0];
-  const todayLogs = filteredAttendance.filter(log => log.date === todayStr);
+  const todayLogs = branchAttendance.filter(log => log.date === todayStr);
 
   const totalStaff = effectiveStaffList.length;
-  const presentToday = todayLogs.filter(log => log.status === 'Present').length;
+  const presentToday = todayLogs.filter(log => log.status === 'Present' || log.status === 'On Duty').length;
   const lateToday = todayLogs.filter(log => log.status === 'Late').length;
   const loggedInStaff = new Set(todayLogs.map(l => l.staffId));
   const absentToday = Math.max(0, totalStaff - loggedInStaff.size);
-  const onLeaveToday = 0; // To be implemented with Leave Module
+  const onLeaveToday = 0;
   const halfDayToday = todayLogs.filter(log => log.status === 'Half Day').length;
 
   const totalToday = presentToday + absentToday + lateToday + onLeaveToday + halfDayToday;
@@ -156,16 +163,15 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
       const d = new Date();
       d.setDate(d.getDate() - i);
       const dateStr = d.toISOString().split('T')[0];
-      const dayLabel = `${d.getDate()} ${d.toLocaleString('en-US', { month: 'short' })}`; // e.g. "14 Aug"
+      const dayLabel = `${d.getDate()} ${d.toLocaleString('en-US', { month: 'short' })}`;
 
-      const dayLogs = filteredAttendance.filter(log => log.date === dateStr);
+      const dayLogs = branchAttendance.filter(log => log.date === dateStr);
       
-      const present = dayLogs.filter(log => log.status === 'Present').length;
+      const present = dayLogs.filter(log => log.status === 'Present' || log.status === 'On Duty').length;
       const late = dayLogs.filter(log => log.status === 'Late').length;
       const leave = dayLogs.filter(log => log.status === 'On Leave').length;
       const halfDay = dayLogs.filter(log => log.status === 'Half Day').length;
 
-      // Unique logged in staff on this day
       const loggedInCount = new Set(dayLogs.map(l => l.staffId)).size;
       const absent = Math.max(0, activeStaffCount - loggedInCount);
 
@@ -185,7 +191,6 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
   const trendData = getTrendData();
   const maxScale = Math.max(5, staffList.length);
   
-  // X coords for 7 points in SVG viewbox (0 to 100)
   const getX = (index: number) => 5 + index * 14.5;
   const getY = (val: number) => 90 - (val / maxScale) * 80;
 
@@ -193,6 +198,52 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
   const absentPath = trendData.map((d, idx) => `${getX(idx)},${getY(d.absent)}`).join(' L ');
   const latePath = trendData.map((d, idx) => `${getX(idx)},${getY(d.late)}`).join(' L ');
   const leavePath = trendData.map((d, idx) => `${getX(idx)},${getY(d.leave)}`).join(' L ');
+
+  // Month options for filter (Current Month + Last 5 Months + All Months)
+  const getMonthFilterOptions = () => {
+    const options = [{ label: 'All Months History', value: 'all' }];
+    const now = new Date();
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+      options.push({ label: i === 0 ? `${label} (Current)` : label, value: val });
+    }
+    return options;
+  };
+
+  // Filtered Logs
+  const filteredAttendance = branchAttendance.filter(log => {
+    // 1. Search Query
+    const q = searchQuery.toLowerCase().trim();
+    const nameMatch = log.name?.toLowerCase().includes(q);
+    const idMatch = log.staffId?.toLowerCase().includes(q);
+    const deptMatch = log.dept?.toLowerCase().includes(q);
+    if (q && !nameMatch && !idMatch && !deptMatch) return false;
+
+    // 2. Staff Filter
+    if (staffFilter !== 'all') {
+      const selectedStaffObj = staffList.find(s => s.id === staffFilter || s.empId === staffFilter);
+      const staffUids = [selectedStaffObj?.id, selectedStaffObj?.empId, selectedStaffObj?.employeeId, selectedStaffObj?.uid].filter(Boolean);
+      if (!staffUids.includes(log.staffId)) return false;
+    }
+
+    // 3. Month Filter
+    if (monthFilter !== 'all') {
+      if (!log.date || !log.date.startsWith(monthFilter)) return false;
+    }
+
+    // 4. Status Filter
+    if (statusFilter !== 'all') {
+      if (statusFilter === 'Present') {
+        if (log.status !== 'Present' && log.status !== 'On Duty') return false;
+      } else if (log.status !== statusFilter) {
+        return false;
+      }
+    }
+
+    return true;
+  });
 
   // Pagination calculations
   const totalEntries = filteredAttendance.length;
@@ -208,27 +259,47 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
 
   const formatDisplayTime = (isoString: string) => {
     if (!isoString) return '-';
-    return new Date(isoString).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    try {
+      return new Date(isoString).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    } catch {
+      return isoString;
+    }
   };
 
   // Helper function for status badges
-  const renderStatus = (status: string, forgiven?: boolean) => {
+  const renderStatus = (status: string, forgiven?: boolean, lateMinutes?: number) => {
     switch(status) {
-      case 'Present': 
+      case 'Present':
+      case 'On Duty':
         return (
           <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-green-50 text-green-700 text-xs font-bold border border-green-100">
             Present {forgiven && <span className="text-[10px] text-green-500 ml-1 font-normal">(Forgiven)</span>}
           </span>
         );
-      case 'Late': return <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-orange-50 text-orange-600 text-xs font-bold border border-orange-100">Late</span>;
-      case 'Absent': return <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-red-50 text-red-600 text-xs font-bold border border-red-100">Absent</span>;
-      case 'On Leave': return <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-blue-50 text-blue-600 text-xs font-bold border border-blue-100">On Leave</span>;
-      default: return null;
+      case 'Late': 
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-amber-50 text-amber-700 text-xs font-bold border border-amber-200">
+            Late {lateMinutes ? `(${lateMinutes}m)` : ''} {forgiven && <span className="text-[10px] text-green-500 ml-1">(Forgiven)</span>}
+          </span>
+        );
+      case 'Half Day': 
+        return (
+          <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-orange-50 text-orange-700 text-xs font-bold border border-orange-200">
+            Half Day {forgiven && <span className="text-[10px] text-green-500 ml-1">(Forgiven)</span>}
+          </span>
+        );
+      case 'Absent': 
+        return <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-red-50 text-red-600 text-xs font-bold border border-red-100">Absent</span>;
+      case 'On Leave': 
+        return <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-blue-50 text-blue-600 text-xs font-bold border border-blue-100">On Leave</span>;
+      default: 
+        return <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-gray-50 text-gray-600 text-xs font-medium">{status || 'Present'}</span>;
     }
   };
 
   return (
     <div className="animate-in fade-in duration-500">
+      
       {/* ----- TOP STATS ROW ----- */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
         <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex flex-col justify-between">
@@ -286,8 +357,6 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
           <p className="text-gray-500 text-[10px] mt-2 ml-[60px]">0% of Total</p>
         </div>
       </div>
-
-      {/* ----- FILTERS SECTION (Export button removed) ----- */}
 
       {/* ----- CHARTS SECTION ----- */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
@@ -365,33 +434,27 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
             
             {/* Graph Area */}
             <div className="absolute left-7 right-2 top-2 bottom-6 border-l border-b border-gray-200">
-              {/* Grid lines */}
               <div className="absolute w-full border-t border-gray-100 top-[20%]"></div>
               <div className="absolute w-full border-t border-gray-100 top-[40%]"></div>
               <div className="absolute w-full border-t border-gray-100 top-[60%]"></div>
               <div className="absolute w-full border-t border-gray-100 top-[80%]"></div>
               
-              {/* Lines */}
               <svg className="absolute inset-0 w-full h-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
-                {/* Present Line */}
                 {presentPath && <path d={`M ${presentPath}`} fill="none" stroke="#10B981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
                 {trendData.map((d, idx) => (
                   <circle key={`pres-${idx}`} cx={getX(idx)} cy={getY(d.present)} r="2" fill="#10B981" />
                 ))}
 
-                {/* Absent Line */}
                 {absentPath && <path d={`M ${absentPath}`} fill="none" stroke="#EF4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
                 {trendData.map((d, idx) => (
                   <circle key={`abs-${idx}`} cx={getX(idx)} cy={getY(d.absent)} r="2" fill="#EF4444" />
                 ))}
 
-                {/* Late Line */}
                 {latePath && <path d={`M ${latePath}`} fill="none" stroke="#F59E0B" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
                 {trendData.map((d, idx) => (
                   <circle key={`late-${idx}`} cx={getX(idx)} cy={getY(d.late)} r="2" fill="#F59E0B" />
                 ))}
 
-                {/* Leave Line */}
                 {leavePath && <path d={`M ${leavePath}`} fill="none" stroke="#3B82F6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
                 {trendData.map((d, idx) => (
                   <circle key={`leave-${idx}`} cx={getX(idx)} cy={getY(d.leave)} r="2" fill="#3B82F6" />
@@ -409,10 +472,90 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
         </div>
       </div>
 
-      {/* ----- ATTENDANCE LOGS TABLE SECTION ----- */}
+      {/* ----- ATTENDANCE LOGS TABLE SECTION WITH FULL MONTH & STAFF FILTERS ----- */}
       <div className="bg-white rounded-[20px] p-5 shadow-sm border border-gray-100">
-        <h2 className="text-lg font-bold text-gray-900 mb-4">Attendance Logs</h2>
+        
+        {/* Header & Comprehensive Filter Bar */}
+        <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-3 mb-5">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">Attendance History Logs</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Filter by employee and month to view complete monthly attendance records</p>
+          </div>
 
+          {/* Filter Controls Bar */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            
+            {/* Search Input */}
+            <div className="relative flex-1 sm:w-48 min-w-[150px]">
+              <Search size={14} className="absolute left-3 top-2.5 text-gray-400" />
+              <input 
+                type="text" 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search staff..." 
+                className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-8 pr-3 py-2 text-xs text-gray-800 focus:outline-none focus:border-blue-500 font-medium"
+              />
+              {searchQuery && (
+                <button onClick={() => setSearchQuery('')} className="absolute right-2.5 top-2 text-xs text-gray-400 font-bold">×</button>
+              )}
+            </div>
+
+            {/* Staff Selector */}
+            <select 
+              value={staffFilter}
+              onChange={(e) => setStaffFilter(e.target.value)}
+              className="bg-gray-50 border border-gray-200 text-gray-800 text-xs font-semibold rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500 cursor-pointer max-w-[170px]"
+            >
+              <option value="all">All Employees</option>
+              {staffList.map(s => (
+                <option key={s.id} value={s.id}>{s.name} ({s.empId || 'No ID'})</option>
+              ))}
+            </select>
+
+            {/* Month Filter */}
+            <select 
+              value={monthFilter}
+              onChange={(e) => setMonthFilter(e.target.value)}
+              className="bg-gray-50 border border-gray-200 text-gray-800 text-xs font-semibold rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500 cursor-pointer"
+            >
+              {getMonthFilterOptions().map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+
+            {/* Status Filter */}
+            <select 
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="bg-gray-50 border border-gray-200 text-gray-800 text-xs font-semibold rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500 cursor-pointer"
+            >
+              <option value="all">All Statuses</option>
+              <option value="Present">Present</option>
+              <option value="Late">Late</option>
+              <option value="Half Day">Half Day</option>
+              <option value="Absent">Absent</option>
+              <option value="On Leave">On Leave</option>
+            </select>
+
+            {(searchQuery || staffFilter !== 'all' || monthFilter !== 'all' || statusFilter !== 'all') && (
+              <button 
+                onClick={() => {
+                  setSearchQuery('');
+                  setStaffFilter('all');
+                  setMonthFilter('all');
+                  setStatusFilter('all');
+                }}
+                className="bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-bold px-2.5 py-2 rounded-xl transition-colors"
+                title="Reset Filters"
+              >
+                Reset
+              </button>
+            )}
+
+          </div>
+        </div>
+
+        {/* Logs Table */}
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1000px]">
             <thead>
@@ -433,7 +576,9 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
             <tbody>
               {currentItems.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-8 text-center text-gray-500">No attendance logs found.</td>
+                  <td colSpan={11} className="py-10 text-center text-gray-400 text-sm">
+                    No attendance logs found matching your filters.
+                  </td>
                 </tr>
               ) : (
                 currentItems.map((log) => (
@@ -441,15 +586,17 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
                     <td className="py-3 px-4 text-sm text-gray-600 font-medium">{log.id.slice(-5)}</td>
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-3">
-                        <img src={log.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(log.name)}&background=EFF6FF&color=1D4ED8`} alt={log.name} className="w-8 h-8 rounded-full object-cover border border-gray-200" />
+                        <img src={log.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(log.name || 'U')}&background=EFF6FF&color=1D4ED8`} alt={log.name} className="w-8 h-8 rounded-full object-cover border border-gray-200" />
                         <span className="text-sm font-medium text-gray-900">{log.name}</span>
                       </div>
                     </td>
                     <td className="py-3 px-4">
                       <span className="bg-blue-50 text-blue-600 text-xs font-bold px-2 py-1 rounded-md">{log.staffId}</span>
                     </td>
-                    <td className="py-3 px-4 text-sm text-gray-600">{log.dept}</td>
-                    <td className="py-3 px-4 text-sm text-gray-600">{log.date}</td>
+                    <td className="py-3 px-4 text-sm text-gray-600">{log.dept || 'Staff'}</td>
+                    <td className="py-3 px-4 text-sm font-bold text-gray-800">
+                      {new Date(log.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                    </td>
                     <td className="py-3 px-4 text-sm text-gray-900 font-medium">
                       {log.punchIn && <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 mr-1.5"></span>}
                       {formatDisplayTime(log.punchIn)}
@@ -459,7 +606,7 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
                       {formatDisplayTime(log.punchOut)}
                     </td>
                     <td className="py-3 px-4 text-sm text-gray-600 font-medium">{log.hours || '-'}</td>
-                    <td className="py-3 px-4">{renderStatus(log.status, log.forgiven)}</td>
+                    <td className="py-3 px-4">{renderStatus(log.status, log.forgiven, log.lateMinutes)}</td>
                     <td className="py-3 px-4 text-sm text-gray-600">
                       <VerifiedLocationBadge
                         location={log.currentLocation || log.locationIn}
@@ -471,7 +618,7 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
                     </td>
                     <td className="py-3 px-4 text-center">
                       <div className="flex items-center justify-center gap-2">
-                        {log.status !== 'Present' && log.status !== 'On Leave' && (
+                        {log.status !== 'Present' && log.status !== 'On Leave' && !log.forgiven && (
                           <button
                             onClick={() => handleForgive(log)}
                             disabled={forgivingId === log.id}
@@ -509,13 +656,13 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
               >
                 &lt;
               </button>
-              {pageNumbers.map((num) => (
+              {pageNumbers.slice(Math.max(0, currentPage - 3), Math.min(totalPages, currentPage + 2)).map((num) => (
                 <button
                   key={num}
                   onClick={() => setCurrentPage(num)}
                   className={`w-8 h-8 flex items-center justify-center rounded-lg font-medium transition-colors ${
                     currentPage === num
-                      ? 'bg-[#2563EB] text-white'
+                      ? 'bg-blue-600 text-white'
                       : 'border border-transparent text-gray-600 hover:bg-gray-50'
                   }`}
                 >
