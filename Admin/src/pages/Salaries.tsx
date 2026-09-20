@@ -119,7 +119,12 @@ function calculateSalaryCycleData(
     }
   }
 
-  const perDaySalary = totalWorkingDays > 0 ? (baseSalary / totalWorkingDays) : (totalCycleDays > 0 ? baseSalary / totalCycleDays : 0);
+  // Fixed standard 30-day base division regardless of cycle days or working days
+  const perDaySalary = baseSalary > 0 ? (baseSalary / 30) : 0;
+  const DAILY_WORKING_HOURS = 9; // 9 hours working time per day
+  const DAILY_WORKING_MINUTES = 9 * 60; // 540 minutes per day
+  const perHourSalary = perDaySalary / DAILY_WORKING_HOURS;
+  const perMinuteSalary = perDaySalary / DAILY_WORKING_MINUTES;
 
   // Now process each day in chronological order
   for (let d = new Date(tempStart); d <= tempEnd; d.setDate(d.getDate() + 1)) {
@@ -170,18 +175,11 @@ function calculateSalaryCycleData(
       } else if (attStatus === 'Late') {
         displayStatus = 'Late';
         lateDaysCount++;
-        let shiftDurationMinutes = 480;
-        if (staff.shiftStartTime && staff.shiftEndTime) {
-          const [startH, startM] = staff.shiftStartTime.split(':').map(Number);
-          const [endH, endM] = staff.shiftEndTime.split(':').map(Number);
-          let diff = (endH * 60 + endM) - (startH * 60 + startM);
-          if (diff < 0) diff += 24 * 60;
-          if (diff > 0) shiftDurationMinutes = diff;
-        }
-        dayDeductionFraction = lateMins > 0 ? (lateMins / shiftDurationMinutes) : 0.25;
+        dayDeductionFraction = lateMins > 0 ? (lateMins / DAILY_WORKING_MINUTES) : 0.25;
         if (!isForgiven) {
           deductionDays += dayDeductionFraction;
         }
+        const lateCutAmount = Math.round(lateMins > 0 ? (lateMins * perMinuteSalary) : (0.25 * perDaySalary));
         deductionDetails.push({
           date: dateStr,
           dayName,
@@ -189,8 +187,8 @@ function calculateSalaryCycleData(
           punchOut: punchOutTime,
           status: 'Late',
           lateMinutes: lateMins,
-          deduction: dayDeductionFraction,
-          amount: Math.round(dayDeductionFraction * perDaySalary),
+          deduction: Number(dayDeductionFraction.toFixed(4)),
+          amount: lateCutAmount,
           forgiven: isForgiven
         });
       } else if (attStatus === 'Half Day') {
@@ -246,7 +244,11 @@ function calculateSalaryCycleData(
       hours: workingHours,
       lateMinutes: lateMins,
       deductionFraction: dayDeductionFraction,
-      deductionAmount: isForgiven ? 0 : Math.round(dayDeductionFraction * perDaySalary),
+      deductionAmount: isForgiven ? 0 : (
+        displayStatus === 'Late'
+          ? Math.round(lateMins > 0 ? (lateMins * perMinuteSalary) : (0.25 * perDaySalary))
+          : Math.round(dayDeductionFraction * perDaySalary)
+      ),
       forgiven: isForgiven,
       holidayTitle,
       leaveReason: approvedLeave?.reason,
@@ -256,7 +258,11 @@ function calculateSalaryCycleData(
     });
   }
 
-  const totalDeductionAmount = Math.round(deductionDays * perDaySalary);
+  const totalDeductionAmount = Math.round(
+    deductionDetails
+      .filter((d: any) => !d.forgiven)
+      .reduce((sum: number, d: any) => sum + (d.amount || 0), 0)
+  );
   const netExpectedAtMaturity = Math.max(0, Math.round(baseSalary - totalDeductionAmount));
   
   // Earned so far: Count actual payable working days passed (excluding deductions) + paid weekly offs / holidays passed
@@ -277,7 +283,10 @@ function calculateSalaryCycleData(
     daysElapsed: daysElapsed,
     totalWorkingDays: totalWorkingDays,
     perDaySalary: Math.round(perDaySalary),
-    deductionDays: deductionDays,
+    perHourSalary: Math.round(perHourSalary),
+    perMinuteSalary: Number(perMinuteSalary.toFixed(2)),
+    workingHoursPerDay: DAILY_WORKING_HOURS,
+    deductionDays: Number(deductionDays.toFixed(2)),
     totalDeductionAmount: totalDeductionAmount,
     earnedTillToday: earnedTillToday,
     expectedSalary: netExpectedAtMaturity,
@@ -420,16 +429,28 @@ export default function Salaries() {
 
     const baseSalary = Number(staff.salaryAmount) || computedCycle.baseSalary || 0;
     const earnedTillToday = computedCycle.earnedTillToday;
-    const totalDeducted = storedRecord?.deductionDays 
+    const paid = storedRecord ? (Number(storedRecord.paidAmount) || 0) : 0;
+    
+    // For pending/unsettled cycles or active cycle, always use the fresh 30-day / 9-hour calculated expected salary.
+    // If a cycle was marked 'Paid' in the past and fully settled, preserve historical expected salary.
+    const isHistoricalPaid = storedRecord?.status === 'Paid' && paid > 0 && Math.abs(paid - (Number(storedRecord.expectedSalary) || 0)) <= 10;
+
+    const totalDeducted = isHistoricalPaid && storedRecord?.deductionDays
       ? Math.round(storedRecord.deductionDays * (storedRecord.perDaySalary || computedCycle.perDaySalary))
       : computedCycle.totalDeductionAmount;
     
-    const expected = storedRecord ? (Number(storedRecord.expectedSalary) || 0) : computedCycle.expectedSalary;
-    const paid = storedRecord ? (Number(storedRecord.paidAmount) || 0) : 0;
-    const pending = expected - paid;
+    const expected = isHistoricalPaid && storedRecord?.expectedSalary
+      ? Number(storedRecord.expectedSalary)
+      : computedCycle.expectedSalary;
+
+    const pending = Math.max(0, expected - paid);
     
     let status = storedRecord?.status;
-    if (!status) {
+    if (paid >= expected && expected > 0) {
+      status = 'Paid';
+    } else if (paid > 0) {
+      status = 'Partial';
+    } else if (!status || status === 'Pending') {
       status = isMatured ? 'Pending' : 'Not Due';
     }
 
@@ -468,6 +489,55 @@ export default function Salaries() {
   const totalMaturedPendingAmount = maturedPendingStaffList.reduce((sum, s) => sum + s.pending, 0);
   const maturedPendingStaffCount = maturedPendingStaffList.length;
 
+  // Auto-sync pending payroll records in Firestore if their perDaySalary or expectedSalary differs from standard 30-day / 9-hr rule
+  useEffect(() => {
+    if (staffTableData.length === 0 || payrollData.length === 0) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        const batch = writeBatch(db);
+        let updatedCount = 0;
+
+        for (const staff of staffTableData) {
+          if (staff.status !== 'Paid' && staff.computedCycle) {
+            const payrollId = `${staff.empId || staff.id}_${staff.maturityDate}`;
+            const existingRecord = payrollData.find(p => p.id === payrollId);
+
+            if (existingRecord) {
+              const expectedSalary = staff.computedCycle.expectedSalary;
+              const perDaySalary = staff.computedCycle.perDaySalary;
+
+              const needsUpdate =
+                existingRecord.perDaySalary !== perDaySalary ||
+                existingRecord.expectedSalary !== expectedSalary;
+
+              if (needsUpdate) {
+                const payrollRef = doc(db, 'payroll', payrollId);
+                batch.update(payrollRef, {
+                  perDaySalary: perDaySalary,
+                  expectedSalary: expectedSalary,
+                  deductionDays: staff.computedCycle.deductionDays,
+                  deductionDetails: staff.computedCycle.deductionDetails,
+                  updatedAt: serverTimestamp()
+                });
+                updatedCount++;
+              }
+            }
+          }
+        }
+
+        if (updatedCount > 0) {
+          await batch.commit();
+          console.log(`Auto-synchronized ${updatedCount} pending payroll records to standard 30-day formula.`);
+        }
+      } catch (err) {
+        console.error('Error auto-syncing pending payroll records:', err);
+      }
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [payrollData.length]);
+
   const handleProcessMaturedSalaries = async () => {
     setLoading(true);
     try {
@@ -478,27 +548,34 @@ export default function Salaries() {
         if (staff.isMatured && staff.status !== 'Paid') {
           const payrollId = `${staff.empId || staff.id}_${staff.maturityDate}`;
           const existingRecord = payrollData.find(p => p.id === payrollId);
+          const payrollRef = doc(db, 'payroll', payrollId);
           
+          const payload = {
+            staffId: staff.empId || staff.id,
+            staffName: staff.name,
+            department: staff.staffType || staff.department || 'General',
+            maturityDate: staff.maturityDate,
+            cycleStartDate: staff.cycleStartDate,
+            cycleEndDate: staff.cycleEndDate,
+            baseSalary: staff.baseSalary,
+            totalWorkingDays: staff.computedCycle.totalWorkingDays,
+            deductionDays: staff.computedCycle.deductionDays,
+            perDaySalary: staff.computedCycle.perDaySalary,
+            deductionDetails: staff.computedCycle.deductionDetails,
+            expectedSalary: staff.computedCycle.expectedSalary,
+            status: (staff.paid || 0) > 0 ? ((staff.paid || 0) >= staff.computedCycle.expectedSalary ? 'Paid' : 'Partial') : 'Pending',
+            updatedAt: serverTimestamp()
+          };
+
           if (!existingRecord) {
-            const payrollRef = doc(db, 'payroll', payrollId);
             batch.set(payrollRef, {
-              staffId: staff.empId || staff.id,
-              staffName: staff.name,
-              department: staff.staffType || staff.department || 'General',
-              maturityDate: staff.maturityDate,
-              cycleStartDate: staff.cycleStartDate,
-              cycleEndDate: staff.cycleEndDate,
-              baseSalary: staff.baseSalary,
-              totalWorkingDays: staff.computedCycle.totalWorkingDays,
-              deductionDays: staff.computedCycle.deductionDays,
-              perDaySalary: staff.computedCycle.perDaySalary,
-              deductionDetails: staff.computedCycle.deductionDetails,
-              expectedSalary: staff.computedCycle.expectedSalary,
+              ...payload,
               paidAmount: 0,
-              status: 'Pending',
-              payments: [],
-              updatedAt: serverTimestamp()
+              payments: []
             });
+            count++;
+          } else if (existingRecord.perDaySalary !== staff.computedCycle.perDaySalary || existingRecord.expectedSalary !== staff.computedCycle.expectedSalary) {
+            batch.update(payrollRef, payload);
             count++;
           }
         }
@@ -506,7 +583,7 @@ export default function Salaries() {
 
       if (count > 0) {
         await batch.commit();
-        alert(`Successfully processed ${count} matured salaries with verified deductions.`);
+        alert(`Successfully processed and synchronized ${count} matured salaries with verified deductions.`);
       } else {
         alert('All matured salaries are already processed and up to date.');
       }
@@ -577,6 +654,10 @@ export default function Salaries() {
         });
       } else {
         batch.update(payrollRef, {
+          perDaySalary: selectedPaymentStaff.computedCycle.perDaySalary,
+          expectedSalary: expectedSalary,
+          deductionDays: selectedPaymentStaff.computedCycle.deductionDays,
+          deductionDetails: selectedPaymentStaff.computedCycle.deductionDetails,
           paidAmount: newPaidAmount,
           status: status,
           payments: arrayUnion(newPayment),
@@ -789,7 +870,8 @@ export default function Salaries() {
         [],
         ['--- FINANCIAL & SALARY CALCULATIONS ---', ''],
         ['Base Monthly Salary (₹)', modalCycleData.baseSalary],
-        ['Per Day Salary Rate (₹)', modalCycleData.perDaySalary],
+        ['Per Day Salary Rate (₹) [÷ 30 Days]', modalCycleData.perDaySalary],
+        ['Per Hour Rate (₹) [9 Hrs Shift]', modalCycleData.perHourSalary],
         ['Earned Till Today (₹)', modalCycleData.earnedTillToday],
         ['Total Deductions Amount (₹)', modalCycleData.totalDeductionAmount],
         ['Total Deduction Days Cut', modalCycleData.deductionDays],
@@ -1475,7 +1557,7 @@ export default function Salaries() {
                   <p className="text-base sm:text-lg font-extrabold text-gray-900 mt-0.5">
                     ₹ {modalCycleData.baseSalary.toLocaleString()}
                   </p>
-                  <p className="text-[9px] text-gray-400 mt-0.5">₹{modalCycleData.perDaySalary}/day rate</p>
+                  <p className="text-[9px] text-gray-400 mt-0.5">₹{modalCycleData.perDaySalary}/day (÷30) • ₹{modalCycleData.perHourSalary}/hr (9h)</p>
                 </div>
 
                 {/* 2. Days in Cycle */}
@@ -1898,7 +1980,9 @@ export default function Salaries() {
             {/* Modal Footer */}
             <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-between items-center shrink-0">
               <div className="text-xs text-gray-500">
-                <span>Per Day Rate: <strong>₹ {modalCycleData.perDaySalary.toLocaleString()}</strong></span>
+                <span>Per Day Rate: <strong>₹ {modalCycleData.perDaySalary.toLocaleString()} (÷30)</strong></span>
+                <span className="mx-2">•</span>
+                <span>Hourly Rate: <strong>₹ {modalCycleData.perHourSalary.toLocaleString()}/hr (9 hrs)</strong></span>
                 <span className="mx-2">•</span>
                 <span>Working Days: <strong>{modalCycleData.totalWorkingDays}</strong></span>
               </div>

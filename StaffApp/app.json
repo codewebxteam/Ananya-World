@@ -3,7 +3,7 @@
     "name": "Ananya World",
     "slug": "StaffApp",
     "owner": "codewebx",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/DrLogoSquare.png",
     "scheme": "staffapp",
@@ -13,6 +13,7 @@
       "bundleIdentifier": "com.localshaadi.StaffApp"
     },
     "android": {
+      "versionCode": 2,
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/images/android-icon-foreground.png",

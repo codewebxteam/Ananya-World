@@ -925,20 +925,13 @@ export default function HomeScreen() {
        totalWorkingDays++;
     }
     
-    const perDay = totalWorkingDays > 0 ? (salaryAmount / totalWorkingDays) : 0;
+    // Fixed standard 30-day base division regardless of cycle days or working days
+    const perDay = salaryAmount > 0 ? (salaryAmount / 30) : 0;
     
-    // Calculate Shift Duration in minutes
-    let shiftDurationMinutes = 480; // Default 8 hours
-    if (userData.shiftStartTime && userData.shiftEndTime) {
-      const [startH, startM] = userData.shiftStartTime.split(':').map(Number);
-      const [endH, endM] = userData.shiftEndTime.split(':').map(Number);
-      let diff = (endH * 60 + endM) - (startH * 60 + startM);
-      if (diff < 0) diff += 24 * 60; // Cross midnight
-      if (diff > 0) shiftDurationMinutes = diff;
-    }
-    
+    // Standard 9 hours working time per day (540 minutes)
+    const shiftDurationMinutes = 9 * 60; // 540 minutes
     const perMinuteSalary = perDay / shiftDurationMinutes;
-    const deductionAmount = (abs * perDay) + (totalLateMinutes * perMinuteSalary);
+    const deductionAmount = Math.round((abs * perDay) + (totalLateMinutes * perMinuteSalary));
     
     const expected = salaryAmount > 0 ? Math.max(0, Math.round(salaryAmount - deductionAmount)) : 0;
 

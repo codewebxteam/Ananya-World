@@ -642,8 +642,8 @@ export default function AttendanceScreen() {
     }
     
     const salaryAmount = Number(userData.salaryAmount || userData.baseSalary || userData.salary || 0);
-    const perDay = totalWorkingDays > 0 ? (salaryAmount / totalWorkingDays) : 0;
-    const shiftDurationMinutes = 480; // 8 hours default
+    const perDay = salaryAmount > 0 ? (salaryAmount / 30) : 0;
+    const shiftDurationMinutes = 9 * 60; // 540 minutes (9 hours working day)
     const perMinuteSalary = perDay / shiftDurationMinutes;
     
     return Math.round(lateMins * perMinuteSalary);

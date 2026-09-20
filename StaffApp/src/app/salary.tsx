@@ -157,20 +157,11 @@ function calculateCycleStats(
      totalWorkingDays++;
   }
   
-  const perDay = totalWorkingDays > 0 ? (salaryAmount / totalWorkingDays) : 0;
+  // Fixed standard 30-day base division regardless of cycle days or working days
+  const perDay = salaryAmount > 0 ? (salaryAmount / 30) : 0;
   
-  // Calculate Shift Duration in minutes
-  let shiftDurationMinutes = 480; // Default 8 hours
-  const sStart = staffData?.shiftStartTime || userData?.shiftStartTime;
-  const sEnd = staffData?.shiftEndTime || userData?.shiftEndTime;
-  if (sStart && sEnd) {
-    const [startH, startM] = sStart.split(':').map(Number);
-    const [endH, endM] = sEnd.split(':').map(Number);
-    let diff = (endH * 60 + endM) - (startH * 60 + startM);
-    if (diff < 0) diff += 24 * 60; // Cross midnight
-    if (diff > 0) shiftDurationMinutes = diff;
-  }
-  
+  // Standard 9 hours working time per day (540 minutes)
+  const shiftDurationMinutes = 9 * 60; // 540 minutes
   const perMinuteSalary = perDay / shiftDurationMinutes;
   const deductionsAmount = Math.round((abs * perDay) + (totalLateMinutes * perMinuteSalary));
   const expected = salaryAmount > 0 ? Math.max(0, Math.round(salaryAmount - deductionsAmount)) : 0;
@@ -273,16 +264,19 @@ export default function SalaryScreen() {
           setUserData(parsed);
           globalSalaryCache.userData = parsed;
 
-          // Listen to staff collection for fresh salaryAmount & nextSalaryDate
-          const staffDocRef = doc(db, 'staff', parsed.empId);
-          unsubStaff = onSnapshot(staffDocRef, (staffSnap) => {
-            if (staffSnap.exists()) {
-              setStaffData(staffSnap.data());
+          // Listen to users collection for fresh salaryAmount & nextSalaryDate
+          const userDocRef = doc(db, 'users', parsed.uid || parsed.id);
+          unsubStaff = onSnapshot(userDocRef, (snap) => {
+            if (snap.exists()) {
+              const uData = snap.data();
+              setStaffData(uData);
+              setUserData((prev: any) => ({ ...prev, ...uData }));
             }
           });
 
           // 1. Fetch raw attendance records
-          const qAtt = query(collection(db, 'attendance'), where('staffId', '==', parsed.empId));
+          const staffUids = [parsed.empId, parsed.uid, parsed.id].filter(Boolean);
+          const qAtt = query(collection(db, 'attendance'), where('staffId', 'in', staffUids));
           unsubAtt = onSnapshot(qAtt, (snapshot) => {
             const list: any[] = [];
             snapshot.forEach(docSnap => {
@@ -294,7 +288,7 @@ export default function SalaryScreen() {
           });
 
           // 2. Fetch leaves
-          const qLeaves = query(collection(db, 'leaves'), where('staffId', '==', parsed.empId));
+          const qLeaves = query(collection(db, 'leaves'), where('staffId', 'in', staffUids));
           unsubLeaves = onSnapshot(qLeaves, (snapshot) => {
             const list: any[] = [];
             snapshot.forEach(docSnap => {
@@ -307,17 +301,36 @@ export default function SalaryScreen() {
 
           // 3. Fetch Salary History from Firestore payroll collection
           try {
-            const qPayroll = query(collection(db, 'payroll'), where('staffId', '==', parsed.empId));
+            const qPayroll = query(collection(db, 'payroll'), where('staffId', 'in', staffUids));
             const payrollSnap = await getDocs(qPayroll);
             const pList: any[] = [];
             payrollSnap.forEach(pDoc => {
               const pData = pDoc.data();
+
+              let formattedPeriod = pData.month || pData.period;
+              if (!formattedPeriod && pData.cycleStartDate && pData.cycleEndDate) {
+                const s = new Date(pData.cycleStartDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+                const e = new Date(pData.cycleEndDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+                formattedPeriod = `${s} — ${e}`;
+              }
+
+              let formattedDate = 'Processed';
+              if (pData.payments && pData.payments.length > 0) {
+                const lastPay = pData.payments[pData.payments.length - 1];
+                formattedDate = new Date(lastPay.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+              } else if (pData.maturityDate) {
+                formattedDate = new Date(pData.maturityDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+              }
+
+              const paidOrExpected = pData.paidAmount > 0 ? pData.paidAmount : (pData.expectedSalary || pData.baseSalary || 0);
+
               pList.push({
                 id: pDoc.id,
-                month: pData.month || pData.period || 'Past Month',
-                date: pData.date || pData.paidOn || 'Processed',
-                amount: `₹ ${Number(pData.finalSalary || pData.expectedSalary || pData.baseSalary || 0).toLocaleString('en-IN')}`,
-                rawDate: pData.createdAt || pData.date || ''
+                month: formattedPeriod || 'Salary Cycle',
+                date: formattedDate,
+                amount: `₹ ${Number(paidOrExpected).toLocaleString('en-IN')}`,
+                status: pData.status || 'Paid',
+                rawDate: pData.maturityDate || pData.date || ''
               });
             });
             pList.sort((a, b) => new Date(b.rawDate || 0).getTime() - new Date(a.rawDate || 0).getTime());

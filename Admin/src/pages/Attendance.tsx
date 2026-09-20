@@ -62,11 +62,12 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
               const forgivenDays = details.filter((d: any) => d.forgiven).reduce((sum: number, d: any) => sum + d.deduction, 0);
               const originalDeductionDays = pData.deductionDays || 0;
               const newDeductionDays = Math.max(0, originalDeductionDays - forgivenDays);
-              const perDaySalary = pData.perDaySalary || 0;
               const baseSalary = pData.baseSalary || 0;
+              const perDaySalary = baseSalary > 0 ? Math.round(baseSalary / 30) : (pData.perDaySalary || 0);
               const newExpected = Math.max(0, Math.round(baseSalary - (newDeductionDays * perDaySalary)));
 
               await updateDoc(doc(db, 'payroll', docSnap.id), {
+                perDaySalary: perDaySalary,
                 deductionDetails: details,
                 deductionDays: newDeductionDays,
                 expectedSalary: newExpected,
