@@ -4,8 +4,9 @@ import {
   Calendar, Wallet, CreditCard, Hourglass, 
   Clock4, Play, FileText, CheckCircle2, FileCheck, Eye, Activity, X, AlertTriangle, Undo2,
   CalendarDays, TrendingUp, ArrowUpRight, ArrowDownRight, UserCheck, UserX, Clock,
-  Sparkles, Check, ChevronUp, Landmark, ShieldCheck
+  Sparkles, Check, ChevronUp, Landmark, ShieldCheck, Download, FileSpreadsheet
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { collection, query, where, onSnapshot, writeBatch, doc, serverTimestamp, updateDoc, arrayUnion, getDocs, setDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import StaffDetailsModal from '../components/StaffDetailsModal';
@@ -319,6 +320,7 @@ export default function Salaries() {
   const [modalActiveTab, setModalActiveTab] = useState<'attendance' | 'deductions' | 'bank'>('attendance');
   const [modalCycleOffset, setModalCycleOffset] = useState<number>(0); // 0 = current running cycle, 1 = 1 month ago...
   const [forgivingIndex, setForgivingIndex] = useState<number | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Payment Modal State
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -717,6 +719,256 @@ export default function Salaries() {
           modalCycleOffset
         )
   ) : null;
+
+  // Generate selectable salary cycles for the selected staff member
+  const cycleSelectOptions = React.useMemo(() => {
+    if (!selectedSalaryStaff) return [];
+    const options = [];
+    for (let offset = 0; offset <= 5; offset++) {
+      const cData = (offset === 0 && selectedSalaryStaff.computedCycle)
+        ? selectedSalaryStaff.computedCycle
+        : calculateSalaryCycleData(
+            selectedSalaryStaff,
+            selectedSalaryStaff.nextSalaryDate,
+            selectedSalaryStaff.baseSalary,
+            globalAttendance,
+            globalLeaves,
+            globalHolidays,
+            globalOffCancels,
+            offset
+          );
+      if (!cData || !cData.cycleStartDate || !cData.cycleEndDate) continue;
+      const startFmt = new Date(cData.cycleStartDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+      const endFmt = new Date(cData.cycleEndDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+      
+      let prefix = 'Current Cycle';
+      if (offset === 1) prefix = 'Previous Cycle (1 Month Ago)';
+      else if (offset > 1) prefix = `${offset} Cycles Ago`;
+
+      options.push({
+        value: offset,
+        label: `${prefix}: ${startFmt} — ${endFmt}`
+      });
+    }
+    return options;
+  }, [selectedSalaryStaff, globalAttendance, globalLeaves, globalHolidays, globalOffCancels]);
+
+  // Export Selected Cycle Details to Excel (.xlsx)
+  const handleExportCycleExcel = () => {
+    if (!selectedSalaryStaff || !modalCycleData) return;
+    setIsExporting(true);
+    try {
+      const wb = XLSX.utils.book_new();
+
+      // ----------------------------------------------------
+      // Sheet 1: Cycle & Salary Summary
+      // ----------------------------------------------------
+      const summaryData: any[][] = [
+        ['STAFF SALARY & ATTENDANCE CYCLE REPORT'],
+        ['Report Generated On', new Date().toLocaleString('en-GB')],
+        [],
+        ['--- STAFF PROFILE INFORMATION ---', ''],
+        ['Staff Name', selectedSalaryStaff.name || '—'],
+        ['Employee ID', selectedSalaryStaff.empId || selectedSalaryStaff.employeeId || 'N/A'],
+        ['Designation / Role', selectedSalaryStaff.designation || 'Staff'],
+        ['Department / Type', selectedSalaryStaff.staffType || selectedSalaryStaff.department || 'General'],
+        ['Contact Phone', selectedSalaryStaff.phone || selectedSalaryStaff.phoneNumber || 'N/A'],
+        ['Email Address', selectedSalaryStaff.email || 'N/A'],
+        ['Shift Timings', `${selectedSalaryStaff.shiftStartTime || '--'} to ${selectedSalaryStaff.shiftEndTime || '--'}`],
+        ['Weekly Off', selectedSalaryStaff.weeklyOff || 'Sunday'],
+        [],
+        ['--- SALARY CYCLE TIMELINE ---', ''],
+        ['Cycle Start Date', modalCycleData.cycleStartDate],
+        ['Cycle End Date', modalCycleData.cycleEndDate],
+        ['Cycle Period', `${new Date(modalCycleData.cycleStartDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} — ${new Date(modalCycleData.cycleEndDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`],
+        ['Salary Maturity / Payment Date', new Date(modalCycleData.maturityDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })],
+        ['Selected Cycle Type', modalCycleOffset === 0 ? 'Current Active Cycle' : `${modalCycleOffset} Cycle(s) Prior`],
+        ['Total Days in Cycle', modalCycleData.totalCycleDays],
+        ['Total Working Days', modalCycleData.totalWorkingDays],
+        ['Days Elapsed', modalCycleData.daysElapsed],
+        [],
+        ['--- FINANCIAL & SALARY CALCULATIONS ---', ''],
+        ['Base Monthly Salary (₹)', modalCycleData.baseSalary],
+        ['Per Day Salary Rate (₹)', modalCycleData.perDaySalary],
+        ['Earned Till Today (₹)', modalCycleData.earnedTillToday],
+        ['Total Deductions Amount (₹)', modalCycleData.totalDeductionAmount],
+        ['Total Deduction Days Cut', modalCycleData.deductionDays],
+        ['Net Payable on Salary Date (₹)', modalCycleData.expectedSalary],
+        [],
+        ['--- ATTENDANCE SUMMARY COUNTS ---', ''],
+        ['Present Days', modalCycleData.stats?.present || 0],
+        ['Absent Days', modalCycleData.stats?.absent || 0],
+        ['Late Days', modalCycleData.stats?.late || 0],
+        ['Half Days', modalCycleData.stats?.halfDay || 0],
+        ['Weekly Off Days', modalCycleData.stats?.weeklyOff || 0],
+        ['Company Holidays', modalCycleData.stats?.holiday || 0],
+        ['Approved Leaves', modalCycleData.stats?.onLeave || 0],
+        [],
+        ['--- BANK ACCOUNT DETAILS ---', ''],
+        ['Account Holder Name', selectedSalaryStaff.bankDetails?.accountHolder || selectedSalaryStaff.name || 'N/A'],
+        ['Bank Name', selectedSalaryStaff.bankDetails?.bankName || 'N/A'],
+        ['Account Number', selectedSalaryStaff.bankDetails?.accountNumber || 'N/A'],
+        ['IFSC Code', selectedSalaryStaff.bankDetails?.ifsc || 'N/A'],
+        ['Branch Name', selectedSalaryStaff.bankDetails?.branch || 'N/A']
+      ];
+
+      const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+      wsSummary['!cols'] = [{ wch: 32 }, { wch: 38 }];
+      XLSX.utils.book_append_sheet(wb, wsSummary, 'Cycle Summary');
+
+      // ----------------------------------------------------
+      // Sheet 2: Full Month Attendance History
+      // ----------------------------------------------------
+      const attendanceHeaders = [
+        'Day #',
+        'Date',
+        'Day',
+        'Status',
+        'Punch In Time',
+        'Punch Out Time',
+        'Working Hours',
+        'Late (Minutes)',
+        'Deduction Amount (₹)',
+        'Deduction Status',
+        'Notes / Holiday / Leave / Location'
+      ];
+
+      const attendanceRows = (modalCycleData.fullCalendar || []).map((day: any) => {
+        let punchInStr = '—';
+        let punchOutStr = '—';
+        if (day.punchIn) {
+          try {
+            punchInStr = new Date(day.punchIn).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+          } catch {}
+        }
+        if (day.punchOut) {
+          try {
+            punchOutStr = new Date(day.punchOut).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+          } catch {}
+        }
+
+        const note = day.holidayTitle
+          ? `Holiday: ${day.holidayTitle}`
+          : day.leaveReason
+          ? `Leave: ${day.leaveReason}`
+          : day.location
+          ? day.location
+          : '—';
+
+        const deductionStatus = day.forgiven
+          ? 'Forgiven (Waived)'
+          : day.deductionAmount > 0
+          ? 'Deducted'
+          : 'None';
+
+        return [
+          day.dayNumber,
+          new Date(day.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+          day.dayName,
+          day.status,
+          punchInStr,
+          punchOutStr,
+          day.hours || '—',
+          day.lateMinutes || 0,
+          day.deductionAmount || 0,
+          deductionStatus,
+          note
+        ];
+      });
+
+      const wsAttendance = XLSX.utils.aoa_to_sheet([attendanceHeaders, ...attendanceRows]);
+      wsAttendance['!cols'] = [
+        { wch: 8 },
+        { wch: 15 },
+        { wch: 12 },
+        { wch: 16 },
+        { wch: 16 },
+        { wch: 16 },
+        { wch: 14 },
+        { wch: 15 },
+        { wch: 22 },
+        { wch: 20 },
+        { wch: 38 }
+      ];
+      XLSX.utils.book_append_sheet(wb, wsAttendance, 'Attendance History');
+
+      // ----------------------------------------------------
+      // Sheet 3: Deductions Breakdown
+      // ----------------------------------------------------
+      const deductionHeaders = [
+        '#',
+        'Deduction Date',
+        'Day Name',
+        'Reason / Status',
+        'Punch In Time',
+        'Punch Out Time',
+        'Late Minutes',
+        'Cut Fraction (Days)',
+        'Deduction Amount (₹)',
+        'Resolution Status'
+      ];
+
+      const deductionRows = (modalCycleData.deductionDetails || []).map((item: any, idx: number) => {
+        let punchInTime = '—';
+        let punchOutTime = '—';
+        if (item.punchIn) {
+          try {
+            punchInTime = new Date(item.punchIn).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+          } catch {}
+        }
+        if (item.punchOut) {
+          try {
+            punchOutTime = new Date(item.punchOut).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+          } catch {}
+        }
+
+        return [
+          idx + 1,
+          new Date(item.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+          item.dayName,
+          item.status + (item.status === 'Late' && item.lateMinutes ? ` (${item.lateMinutes}m)` : ''),
+          punchInTime,
+          punchOutTime,
+          item.lateMinutes || 0,
+          `${item.deduction} day`,
+          item.amount,
+          item.forgiven ? 'Forgiven (Refunded)' : 'Active Cut'
+        ];
+      });
+
+      if (deductionRows.length === 0) {
+        deductionRows.push([
+          '-', '-', '-', 'No attendance deductions for this salary cycle (100% On-time / Present)', '-', '-', '-', '-', 0, 'Clean Record'
+        ]);
+      }
+
+      const wsDeductions = XLSX.utils.aoa_to_sheet([deductionHeaders, ...deductionRows]);
+      wsDeductions['!cols'] = [
+        { wch: 6 },
+        { wch: 15 },
+        { wch: 12 },
+        { wch: 22 },
+        { wch: 16 },
+        { wch: 16 },
+        { wch: 14 },
+        { wch: 22 },
+        { wch: 22 },
+        { wch: 22 }
+      ];
+      XLSX.utils.book_append_sheet(wb, wsDeductions, 'Deductions Breakdown');
+
+      // Filename formatted with staff name and selected cycle dates
+      const safeStaffName = (selectedSalaryStaff.name || 'Staff').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+      const filename = `${safeStaffName}_Salary_Cycle_${modalCycleData.cycleStartDate}_to_${modalCycleData.cycleEndDate}.xlsx`;
+
+      XLSX.writeFile(wb, filename);
+    } catch (error) {
+      console.error('Failed to export Excel file:', error);
+      alert('Failed to export Excel file. Please try again.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   // Recent payments list
   const recentPayments = payrollData
@@ -1154,6 +1406,14 @@ export default function Salaries() {
               {/* Top Right Actions */}
               <div className="flex items-center gap-2 self-end sm:self-auto">
                 <button
+                  onClick={handleExportCycleExcel}
+                  disabled={isExporting}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-500 text-xs px-3.5 py-1.5 rounded-xl font-bold transition-all flex items-center gap-1.5 shadow-sm hover:shadow-emerald-500/20 disabled:opacity-50 cursor-pointer"
+                  title="Export this cycle's attendance & salary details to Excel"
+                >
+                  <Download size={13} /> {isExporting ? 'Exporting...' : 'Export to Excel'}
+                </button>
+                <button
                   onClick={() => setFullViewStaff(selectedSalaryStaff)}
                   className="bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs px-3 py-1.5 rounded-xl font-bold transition-all flex items-center gap-1.5 shadow-sm"
                 >
@@ -1182,18 +1442,27 @@ export default function Salaries() {
                 </div>
 
                 {/* History Cycle Switcher */}
-                <div className="flex items-center gap-1.5 self-end sm:self-auto">
+                <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap">
                   <span className="text-[11px] font-semibold text-gray-500">View Cycle:</span>
                   <select 
                     value={modalCycleOffset} 
                     onChange={(e) => setModalCycleOffset(Number(e.target.value))}
                     className="bg-white border border-gray-200 text-xs font-bold text-gray-800 rounded-xl px-3 py-1.5 outline-none cursor-pointer focus:border-blue-500 shadow-sm"
                   >
-                    <option value={0}>Current Active Cycle</option>
-                    <option value={1}>Previous Cycle (1 Month Ago)</option>
-                    <option value={2}>2 Cycles Ago</option>
-                    <option value={3}>3 Cycles Ago</option>
+                    {cycleSelectOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
                   </select>
+
+                  <button
+                    onClick={handleExportCycleExcel}
+                    disabled={isExporting}
+                    className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-1.5 rounded-xl transition-all shadow-sm shadow-emerald-200 disabled:opacity-50 cursor-pointer"
+                    title="Export selected cycle to Excel file"
+                  >
+                    <Download size={13} />
+                    {isExporting ? 'Exporting...' : 'Export Excel'}
+                  </button>
                 </div>
               </div>
 
