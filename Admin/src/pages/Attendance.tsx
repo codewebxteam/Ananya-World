@@ -8,6 +8,7 @@ import {
 import { collection, query, onSnapshot, doc, updateDoc, where, getDocs, serverTimestamp } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import VerifiedLocationBadge from '../components/VerifiedLocationBadge';
+import * as XLSX from 'xlsx';
 
 interface AttendanceProps {
   selectedBranchId?: string;
@@ -257,6 +258,108 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
   for (let i = 1; i <= totalPages; i++) {
     pageNumbers.push(i);
   }
+
+  // Export Filtered Attendance to Excel (.xlsx)
+  const handleExportAttendanceExcel = () => {
+    if (filteredAttendance.length === 0) {
+      alert('No attendance records to export.');
+      return;
+    }
+
+    const headers = [
+      '#',
+      'Date',
+      'Employee Name',
+      'Employee ID',
+      'Department',
+      'Attendance Status',
+      'Punch In Time (Aane Ka Time)',
+      'Punch Out Time (Jaane Ka Time)',
+      'Working Hours',
+      'Late Duration (Kitna Late)',
+      'Punch In Location (Aane Ka Location)',
+      'Punch Out Location (Jaane Ka Location)',
+      'Deduction / Penalty Status'
+    ];
+
+    const rows = filteredAttendance.map((log: any, idx: number) => {
+      let punchInStr = '—';
+      if (log.punchIn) {
+        try {
+          const d = new Date(log.punchIn);
+          punchInStr = !isNaN(d.getTime())
+            ? d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+            : String(log.punchIn);
+        } catch {
+          punchInStr = String(log.punchIn);
+        }
+      }
+
+      let punchOutStr = '—';
+      if (log.punchOut) {
+        try {
+          const d = new Date(log.punchOut);
+          punchOutStr = !isNaN(d.getTime())
+            ? d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+            : String(log.punchOut);
+        } catch {
+          punchOutStr = String(log.punchOut);
+        }
+      } else if (log.punchIn) {
+        punchOutStr = 'Not Punched Out';
+      }
+
+      let lateStr = '—';
+      if (log.lateMinutes > 0) {
+        lateStr = `${log.lateMinutes} mins late`;
+      } else if (log.status === 'Present' || log.status === 'On Duty') {
+        lateStr = 'On-Time (0 min)';
+      } else if (log.status === 'Late') {
+        lateStr = 'Late (Grace exceeded)';
+      }
+
+      const pInLoc = log.locationIn || log.currentLocation || (log.latitudeIn && log.longitudeIn ? `${log.latitudeIn}, ${log.longitudeIn}` : (log.punchIn ? 'Location Not Captured' : '—'));
+      const pOutLoc = log.locationOut || (log.latitudeOut && log.longitudeOut ? `${log.latitudeOut}, ${log.longitudeOut}` : (log.punchOut ? 'Location Not Captured' : (log.punchIn ? 'Shift In Progress / Not Punched Out' : '—')));
+
+      return [
+        idx + 1,
+        log.date ? new Date(log.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—',
+        log.name || '—',
+        log.staffId || '—',
+        log.dept || '—',
+        log.status || '—',
+        punchInStr,
+        punchOutStr,
+        log.hours || (log.punchIn && !log.punchOut ? 'In Progress' : '—'),
+        lateStr,
+        pInLoc,
+        pOutLoc,
+        log.forgiven ? 'Forgiven (Waived)' : 'Standard'
+      ];
+    });
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    ws['!cols'] = [
+      { wch: 6 },
+      { wch: 15 },
+      { wch: 22 },
+      { wch: 16 },
+      { wch: 16 },
+      { wch: 18 },
+      { wch: 22 },
+      { wch: 24 },
+      { wch: 18 },
+      { wch: 22 },
+      { wch: 42 },
+      { wch: 42 },
+      { wch: 22 }
+    ];
+    XLSX.utils.book_append_sheet(wb, ws, 'Attendance Logs');
+
+    const filename = `Attendance_Export_${monthFilter !== 'all' ? monthFilter : 'All_Dates'}_${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(wb, filename);
+  };
 
   const formatDisplayTime = (isoString: string) => {
     if (!isoString) return '-';
@@ -552,6 +655,16 @@ export default function Attendance({ selectedBranchId = 'all', staffList: propSt
                 Reset
               </button>
             )}
+
+            {/* Export Excel Button */}
+            <button 
+              onClick={handleExportAttendanceExcel}
+              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-2 rounded-xl transition-all shadow-sm active:scale-95 cursor-pointer ml-auto sm:ml-0"
+              title="Download filtered attendance as Excel file"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export Excel</span>
+            </button>
 
           </div>
         </div>

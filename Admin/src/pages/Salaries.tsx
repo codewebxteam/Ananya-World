@@ -231,6 +231,23 @@ function calculateSalaryCycleData(
       }
     }
 
+    const punchInLoc = attRecord?.locationIn || attRecord?.currentLocation || (attRecord?.latitudeIn && attRecord?.longitudeIn ? `${attRecord.latitudeIn}, ${attRecord.longitudeIn}` : null);
+    const punchOutLoc = attRecord?.locationOut || (attRecord?.latitudeOut && attRecord?.longitudeOut ? `${attRecord.latitudeOut}, ${attRecord.longitudeOut}` : null);
+
+    let resolvedHours = workingHours;
+    if (!resolvedHours && punchInTime && punchOutTime) {
+      try {
+        const tIn = new Date(punchInTime).getTime();
+        const tOut = new Date(punchOutTime).getTime();
+        if (!isNaN(tIn) && !isNaN(tOut) && tOut > tIn) {
+          const diffMs = tOut - tIn;
+          const h = Math.floor(diffMs / 3600000);
+          const m = Math.floor((diffMs % 3600000) / 60000);
+          resolvedHours = `${h}h ${m}m`;
+        }
+      } catch {}
+    }
+
     fullCalendar.push({
       date: dateStr,
       dayName,
@@ -241,7 +258,7 @@ function calculateSalaryCycleData(
       rawStatus: attStatus,
       punchIn: punchInTime,
       punchOut: punchOutTime,
-      hours: workingHours,
+      hours: resolvedHours,
       lateMinutes: lateMins,
       deductionFraction: dayDeductionFraction,
       deductionAmount: isForgiven ? 0 : (
@@ -252,7 +269,13 @@ function calculateSalaryCycleData(
       forgiven: isForgiven,
       holidayTitle,
       leaveReason: approvedLeave?.reason,
-      location: attRecord?.currentLocation || attRecord?.locationIn || null,
+      locationIn: punchInLoc,
+      locationOut: punchOutLoc,
+      location: punchInLoc || punchOutLoc || null,
+      latitudeIn: attRecord?.latitudeIn || attRecord?.currentLatitude || null,
+      longitudeIn: attRecord?.longitudeIn || attRecord?.currentLongitude || null,
+      latitudeOut: attRecord?.latitudeOut || null,
+      longitudeOut: attRecord?.longitudeOut || null,
       latitude: attRecord?.currentLatitude || attRecord?.latitudeIn || null,
       longitude: attRecord?.currentLongitude || attRecord?.longitudeIn || null
     });
@@ -842,7 +865,128 @@ export default function Salaries() {
       const wb = XLSX.utils.book_new();
 
       // ----------------------------------------------------
-      // Sheet 1: Cycle & Salary Summary
+      // Sheet 1: Daily Attendance History (Primary Sheet on open)
+      // ----------------------------------------------------
+      const attBannerData: any[][] = [
+        ['STAFF SALARY CYCLE - DAILY ATTENDANCE & PUNCH REPORT'],
+        ['Report Generated On', new Date().toLocaleString('en-GB'), '', 'Cycle Type', modalCycleOffset === 0 ? 'Current Active Cycle' : `${modalCycleOffset} Cycle(s) Prior`],
+        [],
+        ['Staff Name', selectedSalaryStaff.name || '—', 'Employee ID', selectedSalaryStaff.empId || selectedSalaryStaff.employeeId || 'N/A', 'Designation', selectedSalaryStaff.designation || 'Staff', 'Department', selectedSalaryStaff.staffType || selectedSalaryStaff.department || 'General'],
+        ['Cycle Period', `${modalCycleData.cycleStartDate} to ${modalCycleData.cycleEndDate}`, 'Total Days in Cycle', modalCycleData.totalCycleDays, 'Total Working Days', modalCycleData.totalWorkingDays, 'Shift Timings', `${selectedSalaryStaff.shiftStartTime || '--'} to ${selectedSalaryStaff.shiftEndTime || '--'}`],
+        ['Present Days', modalCycleData.stats?.present || 0, 'Late Days', modalCycleData.stats?.late || 0, 'Half Days', modalCycleData.stats?.halfDay || 0, 'Absent Days', modalCycleData.stats?.absent || 0, 'Weekly Off Days', modalCycleData.stats?.weeklyOff || 0, 'Company Holidays', modalCycleData.stats?.holiday || 0],
+        ['Base Monthly Salary', `₹${modalCycleData.baseSalary}`, 'Per Day Rate (÷ 30)', `₹${modalCycleData.perDaySalary}`, 'Total Deductions', `₹${modalCycleData.totalDeductionAmount}`, 'Net Payable', `₹${modalCycleData.expectedSalary}`],
+        [],
+      ];
+
+      const attendanceHeaders = [
+        'Day #',
+        'Date',
+        'Day',
+        'Attendance Status',
+        'Punch In Time (Aane Ka Time)',
+        'Punch Out Time (Jaane Ka Time)',
+        'Total Working Hours',
+        'Late Duration (Kitna Late)',
+        'Punch In Location (Aane Ka Location)',
+        'Punch Out Location (Jaane Ka Location)',
+        'Deduction Amount (₹)',
+        'Deduction Status',
+        'Notes / Remarks'
+      ];
+
+      const attendanceRows = (modalCycleData.fullCalendar || []).map((day: any) => {
+        let punchInStr = '—';
+        let punchOutStr = '—';
+        if (day.punchIn) {
+          try {
+            const pIn = new Date(day.punchIn);
+            punchInStr = !isNaN(pIn.getTime())
+              ? pIn.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+              : String(day.punchIn);
+          } catch {
+            punchInStr = String(day.punchIn);
+          }
+        }
+        if (day.punchOut) {
+          try {
+            const pOut = new Date(day.punchOut);
+            punchOutStr = !isNaN(pOut.getTime())
+              ? pOut.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+              : String(day.punchOut);
+          } catch {
+            punchOutStr = String(day.punchOut);
+          }
+        } else if (day.punchIn) {
+          punchOutStr = 'Not Punched Out';
+        }
+
+        let lateStr = '—';
+        if (day.lateMinutes > 0) {
+          lateStr = `${day.lateMinutes} mins late`;
+        } else if (day.status === 'Present' || day.status === 'On Duty') {
+          lateStr = 'On-Time (0 min)';
+        } else if (day.status === 'Late') {
+          lateStr = 'Late (Grace exceeded)';
+        }
+
+        const punchInLocation = day.locationIn || (day.punchIn ? 'Location Not Captured' : '—');
+        const punchOutLocation = day.locationOut || (day.punchOut ? 'Location Not Captured' : (day.punchIn ? 'Shift In Progress / Not Punched Out' : '—'));
+
+        const note = day.holidayTitle
+          ? `Holiday: ${day.holidayTitle}`
+          : day.leaveReason
+          ? `Leave: ${day.leaveReason}`
+          : day.forgiven
+          ? 'Deduction Waived by Admin'
+          : '—';
+
+        const deductionStatus = day.forgiven
+          ? 'Forgiven (Waived)'
+          : day.deductionAmount > 0
+          ? 'Deducted'
+          : 'None';
+
+        return [
+          day.dayNumber,
+          new Date(day.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+          day.dayName,
+          day.status,
+          punchInStr,
+          punchOutStr,
+          day.hours || (day.punchIn && !day.punchOut ? 'In Progress' : '—'),
+          lateStr,
+          punchInLocation,
+          punchOutLocation,
+          day.deductionAmount || 0,
+          deductionStatus,
+          note
+        ];
+      });
+
+      const wsAttendance = XLSX.utils.aoa_to_sheet([
+        ...attBannerData,
+        attendanceHeaders,
+        ...attendanceRows
+      ]);
+      wsAttendance['!cols'] = [
+        { wch: 8 },  // Day #
+        { wch: 15 }, // Date
+        { wch: 12 }, // Day
+        { wch: 18 }, // Attendance Status
+        { wch: 22 }, // Punch In Time
+        { wch: 24 }, // Punch Out Time
+        { wch: 20 }, // Total Working Hours
+        { wch: 22 }, // Late Duration
+        { wch: 42 }, // Punch In Location
+        { wch: 42 }, // Punch Out Location
+        { wch: 18 }, // Deduction Amount (₹)
+        { wch: 20 }, // Deduction Status
+        { wch: 32 }  // Notes / Remarks
+      ];
+      XLSX.utils.book_append_sheet(wb, wsAttendance, 'Daily Attendance');
+
+      // ----------------------------------------------------
+      // Sheet 2: Cycle & Salary Summary
       // ----------------------------------------------------
       const summaryData: any[][] = [
         ['STAFF SALARY & ATTENDANCE CYCLE REPORT'],
@@ -895,84 +1039,8 @@ export default function Salaries() {
       ];
 
       const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
-      wsSummary['!cols'] = [{ wch: 32 }, { wch: 38 }];
-      XLSX.utils.book_append_sheet(wb, wsSummary, 'Cycle Summary');
-
-      // ----------------------------------------------------
-      // Sheet 2: Full Month Attendance History
-      // ----------------------------------------------------
-      const attendanceHeaders = [
-        'Day #',
-        'Date',
-        'Day',
-        'Status',
-        'Punch In Time',
-        'Punch Out Time',
-        'Working Hours',
-        'Late (Minutes)',
-        'Deduction Amount (₹)',
-        'Deduction Status',
-        'Notes / Holiday / Leave / Location'
-      ];
-
-      const attendanceRows = (modalCycleData.fullCalendar || []).map((day: any) => {
-        let punchInStr = '—';
-        let punchOutStr = '—';
-        if (day.punchIn) {
-          try {
-            punchInStr = new Date(day.punchIn).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-          } catch {}
-        }
-        if (day.punchOut) {
-          try {
-            punchOutStr = new Date(day.punchOut).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-          } catch {}
-        }
-
-        const note = day.holidayTitle
-          ? `Holiday: ${day.holidayTitle}`
-          : day.leaveReason
-          ? `Leave: ${day.leaveReason}`
-          : day.location
-          ? day.location
-          : '—';
-
-        const deductionStatus = day.forgiven
-          ? 'Forgiven (Waived)'
-          : day.deductionAmount > 0
-          ? 'Deducted'
-          : 'None';
-
-        return [
-          day.dayNumber,
-          new Date(day.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-          day.dayName,
-          day.status,
-          punchInStr,
-          punchOutStr,
-          day.hours || '—',
-          day.lateMinutes || 0,
-          day.deductionAmount || 0,
-          deductionStatus,
-          note
-        ];
-      });
-
-      const wsAttendance = XLSX.utils.aoa_to_sheet([attendanceHeaders, ...attendanceRows]);
-      wsAttendance['!cols'] = [
-        { wch: 8 },
-        { wch: 15 },
-        { wch: 12 },
-        { wch: 16 },
-        { wch: 16 },
-        { wch: 16 },
-        { wch: 14 },
-        { wch: 15 },
-        { wch: 22 },
-        { wch: 20 },
-        { wch: 38 }
-      ];
-      XLSX.utils.book_append_sheet(wb, wsAttendance, 'Attendance History');
+      wsSummary['!cols'] = [{ wch: 34 }, { wch: 40 }];
+      XLSX.utils.book_append_sheet(wb, wsSummary, 'Cycle & Salary Summary');
 
       // ----------------------------------------------------
       // Sheet 3: Deductions Breakdown
@@ -1041,7 +1109,7 @@ export default function Salaries() {
 
       // Filename formatted with staff name and selected cycle dates
       const safeStaffName = (selectedSalaryStaff.name || 'Staff').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
-      const filename = `${safeStaffName}_Salary_Cycle_${modalCycleData.cycleStartDate}_to_${modalCycleData.cycleEndDate}.xlsx`;
+      const filename = `${safeStaffName}_Salary_Attendance_${modalCycleData.cycleStartDate}_to_${modalCycleData.cycleEndDate}.xlsx`;
 
       XLSX.writeFile(wb, filename);
     } catch (error) {
